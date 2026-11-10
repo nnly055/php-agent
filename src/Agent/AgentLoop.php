@@ -67,17 +67,33 @@ final class AgentLoop
     /**
      * 跑一轮 LLM 流式调用，聚合出 assistant 消息块。
      *
+     * 注意：消费循环体内绝不抛异常（error 事件、UI 回调异常都先记录、流结束后再抛）——
+     * 否则客户端流式生成器会挂起中途被销毁，PHP 禁止在该上下文切 Fiber，无法清理 curl。
+     *
      * @return array{0: string, 1: array<int, array>} 文本 + 块列表
      */
     private function oneRound(array $messages): array
     {
-        $emit = $this->onEvent;
+        $emit0 = $this->onEvent;
+        $emitError = null;
+        $emit = static function (StreamEvent $e) use ($emit0, &$emitError): void {
+            if ($emitError !== null) {
+                return; // 已有异常待抛，静默继续以保证流被拉到底
+            }
+            try {
+                $emit0($e);
+            } catch (\Throwable $t) {
+                $emitError = $t; // UI 故障不中断流消费，结束后再抛
+            }
+        };
+
         $text = '';
-        /** @var array<string, array{name: string, json: string, input?: array}> $openTools */
+        /** @var array<string, array{name: string, json: string}> $openTools */
         $openTools = [];
         /** @var array<int, array> $toolBlocks 按完成顺序收集 tool_use 块 */
         $toolBlocks = [];
         $ended = false;
+        $streamError = null;
 
         $events = $this->client->stream($messages, $this->registry->specs(), $this->system);
 
@@ -107,8 +123,7 @@ final class AgentLoop
                     $id = $ev->data['toolId'];
                     $entry = $openTools[$id] ?? ['name' => $ev->data['toolName'], 'json' => ''];
                     $input = $ev->data['input'] ?? [];
-                    $block = ['type' => 'tool_use', 'id' => $id, 'name' => $entry['name'], 'input' => $input];
-                    $toolBlocks[] = $block;
+                    $toolBlocks[] = ['type' => 'tool_use', 'id' => $id, 'name' => $entry['name'], 'input' => $input];
                     unset($openTools[$id]);
                     $emit($ev);
                     break;
@@ -119,7 +134,8 @@ final class AgentLoop
                     break;
 
                 case 'error':
-                    throw new LLMException($ev->data['message'] ?? '未知流错误');
+                    $streamError = new LLMException($ev->data['message'] ?? '未知流错误');
+                    break; // 记录后继续消费，保证流被拉到底
             }
         }
 
@@ -127,6 +143,14 @@ final class AgentLoop
         foreach ($openTools as $id => $entry) {
             $input = json_decode($entry['json'] ?: '{}', true);
             $toolBlocks[] = ['type' => 'tool_use', 'id' => $id, 'name' => $entry['name'], 'input' => is_array($input) ? $input : []];
+        }
+
+        // 流完整结束后，再抛出记录的异常（流内 error 优先，其次 UI 回调异常）
+        if ($streamError !== null) {
+            throw $streamError;
+        }
+        if ($emitError !== null) {
+            throw $emitError;
         }
 
         $assistantBlocks = [];

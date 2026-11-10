@@ -29,6 +29,7 @@ abstract class BaseSseClient implements LLMClient
 
         $pending = null;
         $transportError = null;
+        $aborted = false;
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -42,16 +43,24 @@ abstract class BaseSseClient implements LLMClient
             CURLOPT_CONNECTTIMEOUT => 15,
             CURLOPT_TIMEOUT => 0, // 流式响应可能持续数分钟，不设总超时
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use (&$pending) {
+            CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use (&$pending, &$aborted) {
+                if ($aborted) {
+                    return 0; // 主动中止传输
+                }
                 $pending = $chunk;
                 \Fiber::suspend();
                 return strlen($chunk);
             },
+            // 空闲时也约每秒触发一次，保证 abort 请求在无数据到达时也能生效
+            CURLOPT_XFERINFOFUNCTION => function () use (&$aborted) {
+                return $aborted ? 1 : 0;
+            },
+            CURLOPT_NOPROGRESS => false,
         ]);
 
-        $fiber = new \Fiber(function () use ($ch, &$transportError) {
+        $fiber = new \Fiber(function () use ($ch, &$transportError, &$aborted) {
             $ok = curl_exec($ch);
-            if ($ok === false) {
+            if ($ok === false && !$aborted) {
                 $transportError = curl_error($ch);
             }
         });
@@ -85,7 +94,20 @@ abstract class BaseSseClient implements LLMClient
                 }
             }
         } finally {
-            curl_close($ch);
+            // 消费契约：本生成器应被调用方消费到自然结束（正常/异常展开的 finally 里 drain 均合法）。
+            // 若仍被挂起中途销毁（调用方违约），PHP 禁止在生成器销毁上下文切 Fiber，
+            // 此时清理只能放弃——吞掉错误避免掩盖原异常，代价是泄漏一个 curl 句柄。
+            try {
+                if (!$fiber->isTerminated()) {
+                    $aborted = true;
+                    while (!$fiber->isTerminated()) {
+                        $fiber->resume();
+                    }
+                }
+                curl_close($ch);
+            } catch (\Throwable) {
+                // 清理失败：放弃句柄，不影响业务异常的传播
+            }
         }
 
         if ($transportError !== null) {

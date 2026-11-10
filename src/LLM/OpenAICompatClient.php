@@ -34,80 +34,101 @@ final class OpenAICompatClient extends BaseSseClient
         $url = $this->config->baseUrl() . '/chat/completions';
         $headers = ['Authorization: Bearer ' . $this->config->apiKey()];
 
-        // index → 累积中的 tool call
+        // index → 累积中的 tool call。
+        // OpenAI 流式协议里，后续 arguments 增量只带 index 不带 id，必须按 index 做 key。
         $openTools = [];
         $ended = false;
 
         $flushTools = function () use (&$openTools, &$ended): \Generator {
-            foreach ($openTools as $id => $t) {
+            foreach ($openTools as $t) {
                 $input = json_decode($t['args'] ?: '{}', true);
-                yield StreamEvent::toolEnd($id, $t['name'], is_array($input) ? $input : []);
+                yield StreamEvent::toolEnd($t['id'], $t['name'], is_array($input) ? $input : []);
             }
             $openTools = [];
             yield StreamEvent::end($ended);
         };
 
-        foreach ($this->postSse($url, $headers, $body) as $payload) {
-            if (trim($payload) === '[DONE]') {
-                if (!$ended) {
-                    yield from $flushTools();
+        $stream = $this->postSse($url, $headers, $body);
+
+        try {
+            foreach ($stream as $payload) {
+                if (trim($payload) === '[DONE]') {
+                    if (!$ended) {
+                        yield from $flushTools();
+                    }
+                    return; // finally 会把底层流拉到自然结束
                 }
-                return;
-            }
 
-            $j = json_decode($payload, true);
-            if (!is_array($j)) {
-                continue;
-            }
-            if (isset($j['error'])) {
-                throw new LLMException('OpenAI 兼容端点错误: ' . ($j['error']['message'] ?? $payload));
-            }
+                $j = json_decode($payload, true);
+                if (!is_array($j)) {
+                    continue;
+                }
+                if (isset($j['error'])) {
+                    throw new LLMException('OpenAI 兼容端点错误: ' . ($j['error']['message'] ?? $payload));
+                }
 
-            $choice = $j['choices'][0] ?? null;
-            if ($choice === null) {
-                continue; // usage 块等
-            }
-            $delta = $choice['delta'] ?? [];
+                $choice = $j['choices'][0] ?? null;
+                if ($choice === null) {
+                    continue; // usage 块等
+                }
+                $delta = $choice['delta'] ?? [];
 
-            if (isset($delta['reasoning_content']) && $delta['reasoning_content'] !== '') {
-                yield StreamEvent::thinking((string) $delta['reasoning_content']);
-            }
-            if (!empty($delta['content'])) {
-                yield StreamEvent::text((string) $delta['content']);
-            }
+                if (isset($delta['reasoning_content']) && $delta['reasoning_content'] !== '') {
+                    yield StreamEvent::thinking((string) $delta['reasoning_content']);
+                }
+                if (!empty($delta['content'])) {
+                    yield StreamEvent::text((string) $delta['content']);
+                }
 
-            foreach ($delta['tool_calls'] ?? [] as $tc) {
-                $idx = $tc['index'] ?? 0;
-                $id = $tc['id'] ?? null;
-                $name = $tc['function']['name'] ?? null;
+                foreach ($delta['tool_calls'] ?? [] as $tc) {
+                    $idx = (int) ($tc['index'] ?? 0);
+                    $id = isset($tc['id']) && $tc['id'] !== '' ? (string) $tc['id'] : null;
+                    $name = isset($tc['function']['name']) && $tc['function']['name'] !== ''
+                        ? (string) $tc['function']['name'] : null;
 
-                if ($id !== null || $name !== null) {
-                    $key = $id ?? 'idx_' . $idx;
-                    if (!isset($openTools[$key])) {
-                        $openTools[$key] = ['name' => (string) ($name ?? ''), 'args' => ''];
-                        yield StreamEvent::toolStart($key, (string) ($name ?? ''));
-                    } elseif ($name !== null) {
-                        $openTools[$key]['name'] = (string) $name;
+                    if (!isset($openTools[$idx])) {
+                        $openTools[$idx] = [
+                            'id' => $id ?? ('call_' . $idx),
+                            'name' => $name ?? '',
+                            'args' => '',
+                        ];
+                        yield StreamEvent::toolStart($openTools[$idx]['id'], $openTools[$idx]['name']);
+                    } else {
+                        if ($id !== null) {
+                            $openTools[$idx]['id'] = $id;
+                        }
+                        if ($name !== null) {
+                            $openTools[$idx]['name'] = $name;
+                        }
+                    }
+
+                    $argsChunk = $tc['function']['arguments'] ?? null;
+                    if ($argsChunk !== null && $argsChunk !== '') {
+                        $openTools[$idx]['args'] .= (string) $argsChunk;
+                        yield StreamEvent::toolInputDelta($openTools[$idx]['id'], (string) $argsChunk);
                     }
                 }
-                $argsChunk = $tc['function']['arguments'] ?? null;
-                if ($argsChunk !== null && isset($openTools[$id ?? 'idx_' . $idx])) {
-                    $key = $id ?? 'idx_' . $idx;
-                    $openTools[$key]['args'] .= (string) $argsChunk;
-                    yield StreamEvent::toolInputDelta($key, (string) $argsChunk);
+
+                $finish = $choice['finish_reason'] ?? null;
+                if ($finish !== null && !$ended) {
+                    $ended = (string) $finish;
+                    yield from $flushTools();
                 }
             }
 
-            $finish = $choice['finish_reason'] ?? null;
-            if ($finish !== null && !$ended) {
-                $ended = (string) $finish;
+            // 没等到 [DONE] / finish_reason 也兜底收尾
+            if (!$ended) {
                 yield from $flushTools();
             }
-        }
-
-        // 没等到 [DONE] / finish_reason 也兜底收尾
-        if (!$ended) {
-            yield from $flushTools();
+        } finally {
+            // 契约：底层流式生成器绝不能挂起中途被销毁（PHP 禁止在生成器销毁上下文切 Fiber）。
+            // 无论正常结束、[DONE] 提前返回还是中途异常，都把底层流拉到自然再结束。
+            try {
+                foreach ($stream as $ignored) {
+                }
+            } catch (\Throwable) {
+                // drain 失败不覆盖原异常
+            }
         }
     }
 

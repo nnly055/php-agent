@@ -7,6 +7,24 @@
 
 ## [Unreleased]
 
+### 修复（DeepSeek 真实环境实测发现）
+
+- **curl 句柄在回调上下文中被关闭**（`curl_close(): Attempt to close cURL handle from a callback`）：
+  SSE 流在 `[DONE]` 后提前返回时，Fiber 仍挂起在 curl 回调里，生成器销毁时执行清理会触发
+  PHP 禁止的回调内 close。改为先把传输入为中止（WRITEFUNCTION 返回 0 + XFERINFOFUNCTION
+  兜底），让 `curl_exec` 跑完、Fiber 终结后再关闭句柄。
+- **OpenAI 兼容协议工具参数丢失**（工具入参全变成 `[]`）：流式 tool call 的后续
+  arguments 增量只带 `index` 不带 `id`，原实现按 id 做 key 导致增量落到错误的桶。
+  改为按协议规定以 `index` 为累积 key。
+- **Fiber 销毁上下文限制**（`Cannot switch fibers in current execution context`）：
+  通过最小复现脚本确认——流式生成器在挂起中途被销毁时（提前 return / 中途 throw /
+  消费者抛弃），PHP 禁止切 Fiber，任何清理都会失败。修复三层：
+  1. 客户端 stream() 用 try/finally 把底层流**拉到自然结束**（drain），提前 return /
+     中途异常均安全（经复现脚本验证异常展开的 finally 里 drain 合法）；
+  2. AgentLoop 消费循环体内**绝不抛异常**——流内 error 事件、UI 回调异常都先记录、
+     流结束后再抛，保证客户端生成器永远被消费到底；
+  3. postSse 的清理加兜底 try/catch，清理失败不掩盖原异常（调用方违约时放弃句柄）。
+
 ### 计划
 
 - 会话持久化（SQLite）

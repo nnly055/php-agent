@@ -35,59 +35,72 @@ final class AnthropicClient extends BaseSseClient
         $blockName = [];
         $blockJson = [];
 
-        foreach ($this->postSse($url, $headers, $body) as $payload) {
-            $j = json_decode($payload, true);
-            if (!is_array($j) || !isset($j['type'])) {
-                continue;
-            }
+        $stream = $this->postSse($url, $headers, $body);
 
-            switch ($j['type']) {
-                case 'error':
-                    throw new LLMException('Anthropic 流内错误: ' . ($j['error']['message'] ?? $payload));
+        try {
+            foreach ($stream as $payload) {
+                $j = json_decode($payload, true);
+                if (!is_array($j) || !isset($j['type'])) {
+                    continue;
+                }
 
-                case 'content_block_start':
-                    $cb = $j['content_block'] ?? [];
-                    if (($cb['type'] ?? '') === 'tool_use') {
+                switch ($j['type']) {
+                    case 'error':
+                        throw new LLMException('Anthropic 流内错误: ' . ($j['error']['message'] ?? $payload));
+
+                    case 'content_block_start':
+                        $cb = $j['content_block'] ?? [];
+                        if (($cb['type'] ?? '') === 'tool_use') {
+                            $idx = $j['index'];
+                            $blockKind[$idx] = 'tool';
+                            $blockId[$idx] = $cb['id'];
+                            $blockName[$idx] = $cb['name'];
+                            $blockJson[$idx] = '';
+                            yield StreamEvent::toolStart((string) $cb['id'], (string) $cb['name']);
+                        }
+                        break;
+
+                    case 'content_block_delta':
                         $idx = $j['index'];
-                        $blockKind[$idx] = 'tool';
-                        $blockId[$idx] = $cb['id'];
-                        $blockName[$idx] = $cb['name'];
-                        $blockJson[$idx] = '';
-                        yield StreamEvent::toolStart((string) $cb['id'], (string) $cb['name']);
-                    }
-                    break;
+                        $delta = $j['delta'] ?? [];
+                        if (($delta['type'] ?? '') === 'text_delta') {
+                            yield StreamEvent::text((string) ($delta['text'] ?? ''));
+                        } elseif (($delta['type'] ?? '') === 'input_json_delta' && isset($blockKind[$idx]) && $blockKind[$idx] === 'tool') {
+                            $chunk = (string) ($delta['partial_json'] ?? '');
+                            $blockJson[$idx] .= $chunk;
+                            yield StreamEvent::toolInputDelta($blockId[$idx], $chunk);
+                        }
+                        break;
 
-                case 'content_block_delta':
-                    $idx = $j['index'];
-                    $delta = $j['delta'] ?? [];
-                    if (($delta['type'] ?? '') === 'text_delta') {
-                        yield StreamEvent::text((string) ($delta['text'] ?? ''));
-                    } elseif (($delta['type'] ?? '') === 'input_json_delta' && isset($blockKind[$idx]) && $blockKind[$idx] === 'tool') {
-                        $chunk = (string) ($delta['partial_json'] ?? '');
-                        $blockJson[$idx] .= $chunk;
-                        yield StreamEvent::toolInputDelta($blockId[$idx], $chunk);
-                    }
-                    break;
+                    case 'content_block_stop':
+                        $idx = $j['index'];
+                        if (($blockKind[$idx] ?? '') === 'tool') {
+                            $input = json_decode($blockJson[$idx] ?: '{}', true);
+                            $input = is_array($input) ? $input : [];
+                            yield StreamEvent::toolEnd($blockId[$idx], $blockName[$idx], $input);
+                            unset($blockKind[$idx], $blockId[$idx], $blockName[$idx], $blockJson[$idx]);
+                        }
+                        break;
 
-                case 'content_block_stop':
-                    $idx = $j['index'];
-                    if (($blockKind[$idx] ?? '') === 'tool') {
-                        $input = json_decode($blockJson[$idx] ?: '{}', true);
-                        $input = is_array($input) ? $input : [];
-                        yield StreamEvent::toolEnd($blockId[$idx], $blockName[$idx], $input);
-                        unset($blockKind[$idx], $blockId[$idx], $blockName[$idx], $blockJson[$idx]);
-                    }
-                    break;
+                    case 'message_delta':
+                        $stop = $j['delta']['stop_reason'] ?? null;
+                        if ($stop !== null) {
+                            yield StreamEvent::end((string) $stop);
+                        }
+                        break;
 
-                case 'message_delta':
-                    $stop = $j['delta']['stop_reason'] ?? null;
-                    if ($stop !== null) {
-                        yield StreamEvent::end((string) $stop);
-                    }
-                    break;
-
-                case 'message_stop':
-                    return; // 一轮消息结束
+                    case 'message_stop':
+                        return; // 一轮消息结束，finally 会把底层流拉到自然结束
+                }
+            }
+        } finally {
+            // 契约：底层流式生成器绝不能挂起中途被销毁（PHP 禁止在生成器销毁上下文切 Fiber）。
+            // 无论正常结束、message_stop 提前返回还是中途异常，都把底层流拉到自然再结束。
+            try {
+                foreach ($stream as $ignored) {
+                }
+            } catch (\Throwable) {
+                // drain 失败不覆盖原异常
             }
         }
     }
