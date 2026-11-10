@@ -1,0 +1,99 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * PHP Agent 终端入口。
+ *
+ *   php bin/agent          正常启动（按 .env 的 provider）
+ *   php bin/agent --fake   离线演示（不需要 API key）
+ */
+
+use PhpAgent\Agent\AgentLoop;
+use PhpAgent\Agent\DefaultSystemPrompt;
+use PhpAgent\Agent\ToolRegistry;
+use PhpAgent\Config;
+use PhpAgent\LLM\AnthropicClient;
+use PhpAgent\LLM\FakeLLMClient;
+use PhpAgent\LLM\LLMClient;
+use PhpAgent\LLM\OpenAICompatClient;
+use PhpAgent\Tools\GrepTool;
+use PhpAgent\Tools\ListDirTool;
+use PhpAgent\Tools\ReadFileTool;
+use PhpAgent\Tools\RunCommandTool;
+use PhpAgent\Tools\WriteFileTool;
+use PhpAgent\Ui\ConsoleUi;
+
+require __DIR__ . '/../vendor/autoload.php';
+
+$root = dirname(__DIR__);
+$config = Config::load($root);
+$fake = in_array('--fake', $argv, true);
+
+$client = match ($fake ? 'fake' : $config->provider()) {
+    'anthropic' => new AnthropicClient($config),
+    'openai' => new OpenAICompatClient($config),
+    'fake' => FakeLLMClient::demo(),
+};
+
+if (!$fake && $config->model() === '') {
+    fwrite(STDERR, "⚠ 未配置 AGENT_MODEL，请在 .env 里设置（参考 .env.example）\n");
+}
+
+$registry = (new ToolRegistry())
+    ->register(new ReadFileTool($config->workspace()))
+    ->register(new WriteFileTool($config->workspace()))
+    ->register(new ListDirTool($config->workspace()))
+    ->register(new RunCommandTool($config->workspace()))
+    ->register(new GrepTool($config->workspace()));
+
+$loop = new AgentLoop(
+    $client,
+    $registry,
+    DefaultSystemPrompt::text($config->workspace()),
+    $config->maxIterations()
+);
+
+$ui = new ConsoleUi($config);
+$ui->banner($fake);
+
+$messages = [];
+
+while (true) {
+    $line = $ui->readLine();
+    if ($line === null) {
+        break; // EOF (Ctrl+D)
+    }
+    $line = trim($line);
+    if ($line === '') {
+        continue;
+    }
+
+    switch ($line) {
+        case '/exit':
+        case '/quit':
+            break 2;
+
+        case '/reset':
+            $messages = [];
+            $ui->info('✓ 会话已清空');
+            continue 2;
+
+        case '/help':
+            $ui->info("可用命令:\n  /reset  清空会话历史\n  /tools  列出已注册工具\n  /exit   退出\n\n内置工具: " . implode(', ', $registry->names()));
+            continue 2;
+
+        case '/tools':
+            $ui->info('已注册工具: ' . implode(', ', $registry->names()));
+            continue 2;
+    }
+
+    try {
+        $loop->run($messages, $line, $ui->handleEvent(...));
+    } catch (\Throwable $e) {
+        $ui->error($e->getMessage());
+    }
+}
+
+$ui->goodbye();

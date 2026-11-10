@@ -1,0 +1,69 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * PHP Agent 本地服务入口（桌面前端对接面）。
+ *
+ *   AGENT_PROVIDER=fake php bin/server   离线启动
+ *   php bin/server                        按 .env 启动
+ *   浏览器打开 http://127.0.0.1:8091
+ */
+
+use PhpAgent\Agent\AgentLoop;
+use PhpAgent\Agent\DefaultSystemPrompt;
+use PhpAgent\Agent\ToolRegistry;
+use PhpAgent\Config;
+use PhpAgent\LLM\AnthropicClient;
+use PhpAgent\LLM\FakeLLMClient;
+use PhpAgent\LLM\OpenAICompatClient;
+use PhpAgent\Server\AgentServer;
+use PhpAgent\Tools\GrepTool;
+use PhpAgent\Tools\ListDirTool;
+use PhpAgent\Tools\ReadFileTool;
+use PhpAgent\Tools\RunCommandTool;
+use PhpAgent\Tools\WriteFileTool;
+use React\EventLoop\Loop;
+use React\Http\HttpServer;
+use React\Socket\SocketServer;
+
+require __DIR__ . '/../vendor/autoload.php';
+
+$root = dirname(__DIR__);
+$config = Config::load($root);
+
+$client = match ($config->provider()) {
+    'anthropic' => new AnthropicClient($config),
+    'fake' => FakeLLMClient::demo(),
+    default => new OpenAICompatClient($config),
+};
+
+$registry = (new ToolRegistry())
+    ->register(new ReadFileTool($config->workspace()))
+    ->register(new WriteFileTool($config->workspace()))
+    ->register(new ListDirTool($config->workspace()))
+    ->register(new RunCommandTool($config->workspace()))
+    ->register(new GrepTool($config->workspace()));
+
+$loop = new AgentLoop(
+    $client,
+    $registry,
+    DefaultSystemPrompt::text($config->workspace()),
+    $config->maxIterations()
+);
+
+$server = new AgentServer($loop, $root . '/public');
+
+$http = new HttpServer(Loop::get(), $server->handle(...));
+$port = $config->serverPort();
+$socket = new SocketServer('127.0.0.1:' . $port, [], Loop::get());
+$http->listen($socket);
+
+echo "PHP Agent 本地服务已启动\n";
+echo "  网页聊天: http://127.0.0.1:{$port}\n";
+echo "  SSE 接口: POST http://127.0.0.1:{$port}/agent  {\"message\": \"...\", \"session_id\": \"...\"}\n";
+echo "  provider: {$config->provider()}  model: " . ($config->model() ?: '(未配置)') . "\n";
+echo "Ctrl+C 退出\n";
+
+Loop::get()->run();

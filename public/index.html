@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PHP Agent</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --green:#3fb950; --yellow:#d29922; --red:#f85149; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--text); font:14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding:12px 20px; border-bottom:1px solid var(--border); display:flex; align-items:baseline; gap:10px; }
+  header h1 { font-size:16px; margin:0; }
+  header span { color:var(--dim); font-size:12px; }
+  #chat { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px; }
+  .msg { max-width:860px; width:fit-content; padding:10px 14px; border-radius:10px; white-space:pre-wrap; word-break:break-word; }
+  .msg.user { background:#1f6feb33; border:1px solid #1f6feb55; align-self:flex-end; }
+  .msg.assistant { background:var(--panel); border:1px solid var(--border); align-self:flex-start; width:calc(100% - 40px); max-width:860px; }
+  .msg.error { color:var(--red); }
+  .tool { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; background:#21262d; border:1px solid var(--border); border-left:3px solid var(--yellow); border-radius:6px; padding:8px 12px; margin:8px 0; color:var(--dim); }
+  .tool b { color:var(--yellow); font-weight:600; }
+  .tool .args { color:var(--text); }
+  .tool .result { border-top:1px dashed var(--border); margin-top:6px; padding-top:6px; color:var(--green); }
+  .tool.failed { border-left-color:var(--red); } .tool.failed .result { color:var(--red); }
+  footer { border-top:1px solid var(--border); padding:12px 20px; display:flex; gap:10px; }
+  #input { flex:1; background:var(--panel); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:10px 14px; font:inherit; outline:none; resize:none; height:44px; }
+  #input:focus { border-color:var(--accent); }
+  #send { background:var(--accent); color:#04121f; border:none; border-radius:8px; padding:0 22px; font-weight:600; cursor:pointer; }
+  #send:disabled { opacity:.4; cursor:default; }
+  .cursor { display:inline-block; width:8px; height:16px; background:var(--accent); vertical-align:-2px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+</style>
+</head>
+<body>
+<header><h1>PHP Agent</h1><span>本地 SSE 服务 · 工具调用 · 流式输出</span></header>
+<main id="chat"></main>
+<footer>
+  <textarea id="input" placeholder="输入任务…（Enter 发送，Shift+Enter 换行）"></textarea>
+  <button id="send">发送</button>
+</footer>
+<script>
+const chat = document.getElementById('chat');
+const input = document.getElementById('input');
+const send = document.getElementById('send');
+let sessionId = 'web-' + Date.now().toString(36);
+
+function addUser(text) {
+  const el = document.createElement('div');
+  el.className = 'msg user';
+  el.textContent = text;
+  chat.appendChild(el);
+}
+function addAssistant() {
+  const el = document.createElement('div');
+  el.className = 'msg assistant';
+  chat.appendChild(el);
+  return el;
+}
+function addTool(name) {
+  const el = document.createElement('div');
+  el.className = 'tool';
+  el.innerHTML = '<b>⚙ ' + escapeHtml(name) + '</b> <span class="args"></span><div class="result" hidden></div>';
+  const wrap = document.createElement('div');
+  wrap.appendChild(el);
+  chat.appendChild(wrap);
+  return el;
+}
+function scroll() { chat.scrollTop = chat.scrollHeight; }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function send_() {
+  const text = input.value.trim();
+  if (!text || send.disabled) return;
+  input.value = ''; send.disabled = true;
+  addUser(text); scroll();
+
+  const bubble = addAssistant();
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor'; bubble.appendChild(cursor);
+
+  let currentTool = null;
+  const finishTool = () => { currentTool = null; };
+
+  try {
+    const resp = await fetch('/agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, session_id: sessionId }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || ('HTTP ' + resp.status));
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop();
+      for (const frame of frames) {
+        for (const line of frame.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          let ev; try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+          const d = ev.data || {};
+          switch (ev.type) {
+            case 'text_delta':
+              bubble.insertBefore(document.createTextNode(d.text), cursor);
+              scroll(); break;
+            case 'thinking_delta':
+              bubble.insertBefore(document.createTextNode(d.text), cursor);
+              scroll(); break;
+            case 'tool_use_start':
+              currentTool = addTool(d.toolName);
+              scroll(); break;
+            case 'tool_use_end':
+              if (currentTool) currentTool.querySelector('.args').textContent =
+                ' ' + JSON.stringify(d.input).slice(0, 160);
+              scroll(); break;
+            case 'tool_result': {
+              let t = currentTool;
+              if (!t) t = addTool(d.toolName);
+              const resEl = t.querySelector('.result');
+              resEl.hidden = false;
+              resEl.textContent = d.result.slice(0, 400);
+              t.classList.toggle('failed', String(d.result).startsWith('ERROR:'));
+              finishTool();
+              scroll(); break;
+            }
+            case 'final':
+              bubble.insertBefore(document.createTextNode('\n' + d.text), cursor);
+              scroll(); break;
+            case 'error': {
+              const el = document.createElement('div');
+              el.className = 'msg error';
+              el.textContent = '✗ ' + d.message;
+              chat.appendChild(el); scroll(); break;
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    const el = document.createElement('div');
+    el.className = 'msg error';
+    el.textContent = '✗ ' + e.message;
+    chat.appendChild(el);
+  } finally {
+    cursor.remove();
+    send.disabled = false;
+    input.focus();
+  }
+}
+
+send.addEventListener('click', send_);
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send_(); }
+});
+input.focus();
+</script>
+</body>
+</html>

@@ -1,0 +1,127 @@
+# PHP Agent
+
+用纯 PHP 实现的 coding agent MVP（对标 opencode / Claude Code 的核心机制）：
+**LLM 流式对话 + 工具调用循环 + 本地 SSE 服务**。
+
+- 终端交互：`php bin/agent`，流式输出、彩色工具调用展示
+- 本地服务：`php bin/server`，内置 Web 聊天页，为将来接入 Tauri/Electron 桌面壳提供 HTTP+SSE 接口
+- 多 Provider：Anthropic 原生协议 + OpenAI 兼容协议（覆盖 GLM / DeepSeek / Kimi / Qwen / OpenAI）
+- 零框架：核心代码仅依赖 curl（Fiber 流式）与 ReactPHP（本地服务）
+
+## 环境要求
+
+- PHP ≥ 8.1（需 `curl`、`json`、`mbstring` 扩展）
+- Composer
+
+## 快速开始
+
+```bash
+cd php-agent
+
+# 1. 安装依赖
+composer install
+
+# 2. 配置 provider（参考 .env.example，任选一个 preset）
+cp .env.example .env
+# 编辑 .env：AGENT_API_KEY + AGENT_BASE_URL + AGENT_MODEL
+
+# 3a. 离线体验（不需要 API key，走内置演示脚本）
+php bin/agent --fake
+
+# 3b. 真实对话
+php bin/agent
+
+# 3c. 本地服务 + 网页聊天
+php bin/server
+# 打开 http://127.0.0.1:8091
+```
+
+### 支持的 Provider preset
+
+| Provider | AGENT_PROVIDER | AGENT_BASE_URL | AGENT_MODEL 示例 |
+|---|---|---|---|
+| 智谱 GLM | `openai` | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.6` |
+| DeepSeek | `openai` | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| Kimi | `openai` | `https://api.moonshot.cn/v1` | `kimi-k2-0905-preview` |
+| OpenAI | `openai` | `https://api.openai.com/v1` | `gpt-4o` |
+| Anthropic | `anthropic` | `https://api.anthropic.com` | `claude-sonnet-4-5` |
+
+## CLI 命令
+
+| 命令 | 说明 |
+|---|---|
+| `/help` | 帮助 |
+| `/tools` | 列出已注册工具 |
+| `/reset` | 清空会话历史 |
+| `/exit` | 退出（Ctrl+D 同效） |
+
+## 内置工具
+
+| 工具 | 功能 | 安全约束 |
+|---|---|---|
+| `read_file` | 读文件（带行号，支持 offset/limit） | 限制在工作目录内 |
+| `write_file` | 写文件（自动创建父目录） | 限制在工作目录内 |
+| `list_dir` | 浏览目录 | 限制在工作目录内 |
+| `run_command` | 执行 shell 命令 | 工作目录内运行；stdin=EOF；默认 60s 超时；输出截断 32KB；非零退出标记 ERROR |
+| `grep` | 递归正则搜索（PCRE） | 跳过 .git/node_modules；上限 200 条 |
+
+工作目录 = 启动 agent 时的当前目录（或 `.env` 里的 `AGENT_WORKSPACE`）。
+`run_command` 能通过 shell 触达整个系统，请在可信项目里使用。
+
+## 架构
+
+```
+┌────────────────────────── bin/agent (CLI) ──────────────────────────┐
+│  ConsoleUi (ANSI 流式渲染)                                           │
+└──────────────────────────────┬──────────────────────────────────────┘
+┌────────────────── bin/server (本地服务) ─────────────────────────────┐
+│  AgentServer: GET / 聊天页 · POST /agent SSE 事件流 (ReactPHP+Fiber) │
+└──────────────────────────────┬──────────────────────────────────────┘
+                        AgentLoop (agent 循环)
+        user 输入 → LLM 流式 → tool_use → 执行 → tool_result 回填 → …
+                        │                       │
+              LLMClient 接口            ToolRegistry 接口
+        ├ AnthropicClient (原生 SSE)   ├ read_file / write_file
+        ├ OpenAICompatClient (兼容)    ├ list_dir / grep
+        └ FakeLLMClient (离线)         └ run_command
+```
+
+关键实现：
+
+- **Fiber 流式**（`src/LLM/BaseSseClient.php`）：curl 的 WRITEFUNCTION 是回调式的，
+  无法直接被 generator 消费——用 PHP 8.1 原生 Fiber 反转控制流：回调里 `Fiber::suspend()`，
+  外层循环消费 chunk 后 `resume()`，实现真正的逐 token 流式，零第三方依赖。
+- **归一化消息格式**（`src/LLM/LLMClient.php`）：内部统一用 Anthropic 块结构，
+  各客户端负责转成自家协议，AgentLoop 与 provider 完全解耦。
+- **统一事件协议**（`src/LLM/StreamEvent.php`）：`text_delta` / `tool_use_*` / `tool_result` /
+  `message_end` / `final` / `error`——CLI 渲染与 SSE 服务共用同一套事件。
+- **沙箱路径解析**（`src/Tools/WorkspaceTool.php`）：realpath 归一化 + 逐级向上找祖先目录
+  （支持 write_file 创建嵌套新目录），所有文件操作限制在工作目录内。
+
+## 测试
+
+```bash
+composer test        # 或 vendor/bin/phpunit
+```
+
+6 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、SSE 解析（分块/跨包/边界）。
+
+## SSE 接口（对接桌面前端）
+
+```bash
+curl -N -X POST http://127.0.0.1:8091/agent \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "列出当前目录", "session_id": "web-1"}'
+```
+
+返回 `text/event-stream`，每帧 `data: {"type": "...", "data": {...}}`，
+事件类型与 `StreamEvent` 一致；会话历史按 `session_id` 在服务端内存中保持。
+
+## 路线图
+
+- [ ] 桌面壳：Tauri sidecar 加载 PHP 内核（或用 FrankenPHP 打包单二进制后端）
+- [ ] 会话持久化（SQLite）
+- [ ] 流式 diff 渲染（write_file 展示修改前后对比）
+- [ ] MCP 客户端接入（logiscape/mcp-sdk-php）
+- [ ] 树形上下文压缩（长会话摘要）
+- [ ] TUI 升级（php-tui）
