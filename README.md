@@ -236,11 +236,11 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 ## 路线图
 
 - [ ] 桌面壳：Tauri sidecar 加载 PHP 内核（或用 FrankenPHP 打包单二进制后端）
-- [ ] 流式 diff 渲染（write_file 展示修改前后对比）
 - [x] MCP 客户端接入（tools + stdio + Streamable HTTP，零依赖内置，见上方「MCP 工具（客户端）」）
-- [ ] 长会话上下文压缩（摘要）
+- [x] 流式 diff 渲染（write_file 变更可视化，授权前 diff 预览 + 结果 diff，见「权限模式与审计」）
+- [x] 长会话上下文压缩（compact 插件：阈值自动触发 + /compact 手动，见「上下文压缩」）
 - [ ] TUI 升级（php-tui）
 
 已实现：会话持久化插件化（json / sqlite3 / redis / memory 一行切换）、
 钩子系统（工具授权确认、审计日志）、composer 包插件发现、插件脚手架、
-**write_file 变更可视化**（授权前 diff 预览 + 结果 diff，diff 插件）。
+MCP 客户端（stdio + Streamable HTTP）、上下文压缩、write_file 变更可视化。

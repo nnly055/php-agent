@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
+> 插件架构三阶段 + MCP 客户端 + 上下文压缩 + write_file 变更可视化。
+> 测试从 6 个增长到 101 个（315 断言）。
+
 ### 新增
 
 - **上下文压缩（compact 插件）**
@@ -171,5 +176,6 @@
 - 端到端（fake provider）：写文件 → 运行 `php demo/hello.php` → 输出 `Hello from PHP Agent!`（exit 0）
 - SSE 服务：`POST /agent` 完整事件流（tool_use → result 回填 → 流式文本 → final 帧）
 
-[Unreleased]: https://example.invalid/php-agent/compare/v0.1.0...HEAD
-[0.1.0]: https://example.invalid/php-agent/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nnly055/php-agent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nnly055/php-agent/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nnly055/php-agent/releases/tag/v0.1.0
