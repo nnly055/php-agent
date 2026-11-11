@@ -137,4 +137,42 @@ final class CompactPluginTest extends TestCase
         self::assertNotSame([], $kernel->hooks());
         self::assertArrayHasKey('compact', $kernel->commands());
     }
+
+    public function testCompactCommandCompactsInPlace(): void
+    {
+        putenv('AGENT_WORKSPACE=' . sys_get_temp_dir());
+        $kernel = new AgentKernel(\PhpAgent\Config::load(sys_get_temp_dir()));
+        $fake = new FakeLLMClient([[StreamEvent::text('摘要内容。'), StreamEvent::end('end_turn')]]);
+        (new CompactPlugin(static fn (): Compactor => new Compactor($fake, 128000, 0.8), 128000, 0.8))
+            ->register($kernel);
+
+        $sessionId = 's-test';
+        $messages = $this->bigHistory();
+        $ctx = new \PhpAgent\Command\CommandContext($kernel, $messages, $sessionId);
+        $cmd = $kernel->command('compact');
+        self::assertNotNull($cmd);
+
+        $out = $cmd->execute([], $ctx);
+        self::assertStringContainsString('已将前', $out);
+        self::assertCount(3, $messages); // 合成对 + 当前任务，写穿生效
+    }
+
+    public function testCompactCommandNoopForShortHistory(): void
+    {
+        putenv('AGENT_WORKSPACE=' . sys_get_temp_dir());
+        $kernel = new AgentKernel(\PhpAgent\Config::load(sys_get_temp_dir()));
+        $fake = new FakeLLMClient([]);
+        (new CompactPlugin(static fn (): Compactor => new Compactor($fake, 128000, 0.8), 128000, 0.8))
+            ->register($kernel);
+
+        $sessionId = 's-test';
+        $messages = [
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => '唯一任务']]],
+            ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => '完成']]],
+        ];
+        $ctx = new \PhpAgent\Command\CommandContext($kernel, $messages, $sessionId);
+        $out = $kernel->command('compact')->execute([], $ctx);
+        self::assertStringContainsString('无需压缩', $out);
+        self::assertCount(2, $messages);
+    }
 }
