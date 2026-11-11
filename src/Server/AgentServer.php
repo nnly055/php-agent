@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PhpAgent\Server;
 
 use PhpAgent\Agent\AgentLoop;
+use PhpAgent\Config;
 use PhpAgent\Hook\HookPipeline;
 use PhpAgent\LLM\StreamEvent;
 use PhpAgent\Session\SessionStore;
@@ -14,13 +15,15 @@ use React\Stream\ThroughStream;
 /**
  * 本地 SSE 服务：桌面应用前端的对接面。
  *
- *   GET  /            → 内置极简聊天页（public/index.html）
- *   POST /agent       → SSE 流式对话，body: {"message": "...", "session_id": "..."}
- *                       每条事件: data: {"type": "...", "data": {...}}\n\n
+ *   GET  /status            → 运行状态（provider/model/workspace/permissions/…）
+ *   GET  /sessions          → 会话列表
+ *   GET  /sessions/{id}     → 会话历史
+ *   DELETE /sessions/{id}   → 删除会话
+ *   POST /confirm/{id}      → 工具授权决定（Task 5）
+ *   POST /agent             → SSE 流式对话
+ *   GET  /                  → 内置极简聊天页（Web 用，桌面不走这里）
  *
- * 会话历史通过 SessionStore 插件持久化（进程重启不丢）。
- * Agent 循环在 Fiber 中执行，每个事件 write 后用 delay(0) 让出事件循环刷写 socket，
- * 这样浏览器就能逐 token 收到流式响应。
+ * 仅绑 127.0.0.1；所有响应带 CORS 头（前端 origin 与 API 不同源）。
  */
 final class AgentServer
 {
@@ -29,26 +32,80 @@ final class AgentServer
         private readonly SessionStore $store,
         private readonly array $hooks,
         private readonly string $publicDir,
+        private readonly Config $config,
+        private readonly ?ConfirmBroker $broker = null,
     ) {
     }
 
     public function handle(\Psr\Http\Message\ServerRequestInterface $request): Response
     {
+        $method = $request->getMethod();
         $path = $request->getUri()->getPath();
 
-        if ($request->getMethod() === 'GET' && ($path === '/' || $path === '/index.html')) {
-            $html = @file_get_contents($this->publicDir . '/index.html');
-            if ($html === false) {
-                return new Response(500, ['Content-Type' => 'text/plain'], 'index.html 缺失');
-            }
-            return new Response(200, ['Content-Type' => 'text/html; charset=utf-8'], $html);
+        if ($method === 'OPTIONS') {
+            return $this->cors(new Response(204));
         }
 
-        if ($request->getMethod() === 'POST' && $path === '/agent') {
+        if ($method === 'GET' && $path === '/status') {
+            return $this->json(200, [
+                'provider' => $this->config->provider(),
+                'model' => $this->config->model(),
+                'workspace' => $this->config->workspace(),
+                'permissions' => $this->config->permissions(),
+                'sessionStore' => $this->config->sessionStore(),
+                'mcp' => $this->config->mcpEnabled(),
+                'version' => Config::VERSION,
+                'maxIterations' => $this->config->maxIterations(),
+            ]);
+        }
+
+        if ($method === 'GET' && $path === '/sessions') {
+            $limit = (int) ($request->getQueryParams()['limit'] ?? 50);
+            $metas = array_map(static fn ($m) => $m->toArray(), $this->store->list(max(1, $limit)));
+            return $this->json(200, ['sessions' => $metas]);
+        }
+
+        if (preg_match('#^/sessions/([^/]+)$#', $path, $m)) {
+            $id = urldecode($m[1]);
+            if ($method === 'GET') {
+                return $this->json(200, ['id' => $id, 'messages' => $this->store->load($id)]);
+            }
+            if ($method === 'DELETE') {
+                $this->store->delete($id);
+                return $this->json(200, ['ok' => true]);
+            }
+        }
+
+        if ($method === 'POST' && preg_match('#^/confirm/([^/]+)$#', $path, $m)) {
+            return $this->handleConfirm(urldecode($m[1]), $request);
+        }
+
+        if ($method === 'POST' && $path === '/agent') {
             return $this->handleAgent($request);
         }
 
-        return new Response(404, ['Content-Type' => 'text/plain; charset=utf-8'], 'Not Found');
+        if ($method === 'GET' && ($path === '/' || $path === '/index.html')) {
+            $html = @file_get_contents($this->publicDir . '/index.html');
+            if ($html === false) {
+                return $this->cors(new Response(500, ['Content-Type' => 'text/plain'], 'index.html 缺失'));
+            }
+            return $this->cors(new Response(200, ['Content-Type' => 'text/html; charset=utf-8'], $html));
+        }
+
+        return $this->json(404, ['error' => 'Not Found']);
+    }
+
+    private function handleConfirm(string $id, \Psr\Http\Message\ServerRequestInterface $request): Response
+    {
+        $body = json_decode((string) $request->getBody(), true);
+        $decision = (string) ($body['decision'] ?? '');
+        if (!in_array($decision, ['y', 'n', 'a'], true)) {
+            return $this->json(400, ['error' => 'decision 必须是 y|n|a']);
+        }
+        if ($this->broker === null || !$this->broker->resolve($id, $decision)) {
+            return $this->json(404, ['error' => '未知或已过期的确认 id']);
+        }
+        return $this->json(200, ['ok' => true]);
     }
 
     private function handleAgent(\Psr\Http\Message\ServerRequestInterface $request): Response
@@ -56,47 +113,62 @@ final class AgentServer
         $body = json_decode((string) $request->getBody(), true);
         $message = trim((string) ($body['message'] ?? ''));
         if ($message === '') {
-            return new Response(
-                400,
-                ['Content-Type' => 'application/json; charset=utf-8'],
-                json_encode(['error' => 'message 不能为空'], JSON_UNESCAPED_UNICODE)
-            );
+            return $this->json(400, ['error' => 'message 不能为空']);
         }
 
         $sid = (string) ($body['session_id'] ?? 'default');
         $messages = $this->store->load($sid);
-
         $stream = new ThroughStream();
+        $broker = $this->broker;
 
-        \React\Async\async(function () use ($stream, $sid, $message, $messages): void {
+        \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker): void {
             try {
                 $onEvent = function (StreamEvent $e) use ($stream): void {
                     $stream->write($this->sseFrame($e));
-                    \React\Async\delay(0.001); // 让出事件循环，把已写入内容刷给客户端
+                    \React\Async\delay(0.001);
                 };
+                if ($broker !== null) {
+                    $broker->setEmitter($onEvent);
+                }
                 $final = $this->loop->run($messages, $message, $onEvent);
-                $this->store->save($sid, $messages); // 仅成功时保存，失败保持原状态
+                $this->store->save($sid, $messages);
                 HookPipeline::fire($this->hooks, 'session_saved', ['sessionId' => $sid]);
                 $stream->write($this->sseFrame(StreamEvent::finalAnswer($final)));
                 $stream->end();
             } catch (\Throwable $e) {
                 $stream->write($this->sseFrame(StreamEvent::error($e->getMessage())));
                 $stream->end();
+            } finally {
+                $broker?->discardActive();
             }
         })();
 
-        return new Response(200, [
+        return $this->cors(new Response(200, [
             'Content-Type' => 'text/event-stream',
             'Cache-Control' => 'no-cache',
             'X-Accel-Buffering' => 'no',
-        ], $stream);
+        ], $stream));
     }
 
     private function sseFrame(StreamEvent $e): string
     {
-        return 'data: ' . json_encode(
-            ['type' => $e->type, 'data' => $e->data],
-            JSON_UNESCAPED_UNICODE
-        ) . "\n\n";
+        return 'data: ' . json_encode(['type' => $e->type, 'data' => $e->data], JSON_UNESCAPED_UNICODE) . "\n\n";
+    }
+
+    private function json(int $status, array $data): Response
+    {
+        return $this->cors(new Response(
+            $status,
+            ['Content-Type' => 'application/json; charset=utf-8'],
+            json_encode($data, JSON_UNESCAPED_UNICODE)
+        ));
+    }
+
+    private function cors(Response $resp): Response
+    {
+        return $resp
+            ->withHeader('Access-Control-Allow-Origin', '*')
+            ->withHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type');
     }
 }
