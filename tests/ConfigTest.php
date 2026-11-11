@@ -53,4 +53,19 @@ final class ConfigTest extends TestCase
         self::assertSame(128000, $c->contextTokens());
         self::assertSame(0.8, $c->compactThreshold());
     }
+
+    public function testServerPortAllowsZeroForAutoAssign(): void
+    {
+        self::assertSame(0, $this->configWith("AGENT_SERVER_PORT=0\n")->serverPort());
+    }
+
+    public function testServerPortDefaultsTo8091(): void
+    {
+        self::assertSame(8091, $this->configWith("AGENT_PROVIDER=fake\n")->serverPort());
+    }
+
+    public function testVersionConstantExists(): void
+    {
+        self::assertSame('0.2.0', Config::VERSION);
+    }
 }

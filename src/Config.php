@@ -9,6 +9,9 @@ namespace PhpAgent;
  */
 final class Config
 {
+    /** 应用版本（/status 展示用；发版手动 bump，单一来源） */
+    public const VERSION = '0.2.0';
+
     private function __construct(private array $env)
     {
     }
@@ -99,7 +102,7 @@ final class Config
 
     public function serverPort(): int
     {
-        return max(1, (int) ($this->env['AGENT_SERVER_PORT'] ?? 8091));
+        return max(0, (int) ($this->env['AGENT_SERVER_PORT'] ?? 8091));
     }
 
     // ── 插件与会话 ──────────────────────────────────────────
