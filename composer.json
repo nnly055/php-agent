@@ -1,8 +1,9 @@
 {
-    "name": "php-agent/php-agent",
-    "description": "PHP 终端/桌面 coding agent MVP：LLM 流式对话 + 工具调用 + 本地 SSE 服务",
+    "name": "nnly055/php-agent",
+    "description": "PHP 终端/桌面 coding agent：LLM 流式对话 + 工具调用 + 插件化持久化 + 本地 SSE 服务",
     "type": "project",
     "license": "MIT",
+    "keywords": ["agent", "llm", "coding-agent", "php", "cli", "tool-calling", "deepseek", "openai", "anthropic"],
     "require": {
         "php": ">=8.1",
         "ext-curl": "*",

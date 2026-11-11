@@ -1,7 +1,10 @@
 # PHP Agent
 
-用纯 PHP 实现的 coding agent MVP（对标 opencode / Claude Code 的核心机制）：
-**LLM 流式对话 + 工具调用循环 + 本地 SSE 服务**。
+[![CI](https://github.com/nnly055/php-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/nnly055/php-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+用纯 PHP 实现的 coding agent（对标 opencode / Claude Code 的核心机制）：
+**LLM 流式对话 + 工具调用循环 + 插件化持久化 + 本地 SSE 服务**。
 
 - 终端交互：`php bin/agent`，流式输出、彩色工具调用展示
 - 本地服务：`php bin/server`，内置 Web 聊天页，为将来接入 Tauri/Electron 桌面壳提供 HTTP+SSE 接口
