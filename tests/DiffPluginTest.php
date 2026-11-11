@@ -153,4 +153,28 @@ final class DiffPluginTest extends TestCase
         self::assertStringContainsString('-before', $toolResult);
         self::assertStringContainsString('+after', $toolResult);
     }
+
+    public function testPreviewHookSilentOutputSuppressesEcho(): void
+    {
+        $ws = sys_get_temp_dir() . '/php-agent-diff-' . uniqid();
+        mkdir($ws, 0777, true);
+        $hook = new \PhpAgent\Plugin\Diff\DiffPreviewHook($ws, static function (string $s): void {});
+        ob_start();
+        $hook->handle('before_tool_call', ['tool' => 'write_file', 'input' => ['path' => 'new.php', 'content' => "<?php\n"]]);
+        $out = ob_get_clean();
+        self::assertSame('', $out);
+        @rmdir($ws);
+    }
+
+    public function testPreviewHookDefaultEchoes(): void
+    {
+        $ws = sys_get_temp_dir() . '/php-agent-diff-' . uniqid();
+        mkdir($ws, 0777, true);
+        $hook = new \PhpAgent\Plugin\Diff\DiffPreviewHook($ws);
+        ob_start();
+        $hook->handle('before_tool_call', ['tool' => 'write_file', 'input' => ['path' => 'new.php', 'content' => "<?php\n"]]);
+        $out = ob_get_clean();
+        self::assertStringContainsString('变更预览', $out);
+        @rmdir($ws);
+    }
 }
