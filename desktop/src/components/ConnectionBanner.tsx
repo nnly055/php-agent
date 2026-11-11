@@ -1,4 +1,26 @@
-/** 占位组件：Task 19 实现断线横幅（重试/重启内核）。 */
-export function ConnectionBanner(_props: { onRetry: () => void }) {
-  return null;
+import { useAppStore } from "../store/useAppStore";
+import { restartBackend } from "../lib/tauri";
+import { Button } from "./ui/button";
+import { WifiOff, RefreshCw } from "lucide-react";
+
+export function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
+  const connected = useAppStore((s) => s.connected);
+  const error = useAppStore((s) => s.error);
+  if (connected && !error) return null;
+
+  async function reconnect() {
+    useAppStore.getState().setError(null);
+    await restartBackend();
+    onRetry();
+  }
+
+  return (
+    <div className="flex items-center gap-3 border-b border-danger/40 bg-danger/10 px-4 py-2 text-sm text-danger">
+      <WifiOff size={16} />
+      <span>{connected ? error : "后端已断开——PHP sidecar 未运行"}</span>
+      <Button size="sm" variant="outline" className="ml-auto gap-1 border-danger/40 text-danger hover:bg-danger/10" onClick={reconnect}>
+        <RefreshCw size={13} /> 重连
+      </Button>
+    </div>
+  );
 }
