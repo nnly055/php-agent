@@ -155,6 +155,12 @@ final class Config
         return strtolower(trim($this->env['AGENT_PLUGINS'] ?? ''));
     }
 
+    /** MCP 客户端开关：on（默认）| off（不加载 McpPlugin、不连任何 server） */
+    public function mcpEnabled(): bool
+    {
+        return strtolower(trim($this->env['AGENT_MCP'] ?? 'on')) !== 'off';
+    }
+
     // ── 权限与审计 ──────────────────────────────────────────
 
     /**

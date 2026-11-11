@@ -60,6 +60,7 @@ php bin/server
 | `/resume [id]` | 恢复会话（无参数=最近一个） |
 | `/new` | 开启新会话 |
 | `/reset` | 清空当前会话历史 |
+| `/mcp` | 查看 MCP server 状态与工具清单 |
 | `/exit` | 退出（Ctrl+D 同效） |
 
 会话在每轮任务结束后自动保存；CLI 重进 `/resume` 续聊，server 重启不丢会话。
@@ -127,6 +128,27 @@ composer 包的实现。`AGENT_PLUGINS=off` 关闭 2/3 层；逗号列表按插�
 给第三方开发者的完整接入手册（含 MySQL 持久化插件参考实现）见
 [docs/plugin-dev-guide.md](docs/plugin-dev-guide.md)。
 
+## MCP 工具（客户端）
+
+在工作区根目录放 `.mcp.json`（格式与 Claude Code / Cursor 兼容），启动即自动连接并把
+server 的工具挂进工具列表（`/tools` 可见，名称形如 `mcp__<server>__<tool>`）：
+
+```json
+{
+  "mcpServers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"] },
+    "remote": { "url": "https://mcp.example.com/mcp", "headers": { "Authorization": "Bearer xxx" } }
+  }
+}
+```
+
+- 传输：`command` = 本地 stdio 子进程；`url` = Streamable HTTP（远程）
+- 每条目可选 `timeout`（秒，默认 30）、`env`（stdio 环境变量）、`headers`（HTTP 请求头）
+- 权限：server 声明 `readOnlyHint: true` 的工具自动放行，其余在 ask 模式下先确认
+- `/mcp` 查看 server 状态与工具清单；`AGENT_MCP=off` 整体禁用
+- 退出时自动清理 stdio 子进程；单个 server 连接失败不影响其余工具
+- 首版仅消费 tools 能力（resources / prompts / sampling 暂不支持），协议版本 2025-06-18
+
 ## 内置工具
 
 | 工具 | 功能 | 安全约束 |
@@ -176,7 +198,7 @@ composer 包的实现。`AGENT_PLUGINS=off` 关闭 2/3 层；逗号列表按插�
 composer test        # 或 vendor/bin/phpunit
 ```
 
-6 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、SSE 解析（分块/跨包/边界）。
+72 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、SSE 解析（分块/跨包/边界）。
 
 ## SSE 接口（对接桌面前端）
 
@@ -193,7 +215,7 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 
 - [ ] 桌面壳：Tauri sidecar 加载 PHP 内核（或用 FrankenPHP 打包单二进制后端）
 - [ ] 流式 diff 渲染（write_file 展示修改前后对比）
-- [ ] MCP 客户端接入（logiscape/mcp-sdk-php）
+- [x] MCP 客户端接入（tools + stdio + Streamable HTTP，零依赖内置，见上方「MCP 工具（客户端）」）
 - [ ] 长会话上下文压缩（摘要）
 - [ ] TUI 升级（php-tui）
 

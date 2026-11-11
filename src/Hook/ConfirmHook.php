@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace PhpAgent\Hook;
 
+use PhpAgent\Agent\ReadOnlyTool;
+use PhpAgent\Agent\ToolRegistry;
+
 /**
  * 工具执行授权钩子（对标 Claude Code 权限模式）。
  *
@@ -12,6 +15,7 @@ namespace PhpAgent\Hook;
  * - 其余工具（含第三方插件注册的，默认按需授权）先问用户
  * - 用户答 'a'（always）后本次进程内该工具不再询问
  * - prompt 回调返回 'y' | 'n' | 'a'
+ * - 工具实现 ReadOnlyTool 且 readOnly()=true 时自动放行（MCP 等动态工具用）
  */
 final class ConfirmHook implements AgentHook
 {
@@ -21,8 +25,10 @@ final class ConfirmHook implements AgentHook
     private array $allowedTools = [];
 
     /** @param \Closure(string $tool, array $input): string $prompt */
-    public function __construct(private readonly \Closure $prompt)
-    {
+    public function __construct(
+        private readonly \Closure $prompt,
+        private readonly ?ToolRegistry $registry = null,
+    ) {
     }
 
     public function events(): array
@@ -38,6 +44,10 @@ final class ConfirmHook implements AgentHook
             return;
         }
         if (in_array($tool, self::READ_ONLY, true)) {
+            return;
+        }
+        $t = $this->registry?->find($tool);
+        if ($t instanceof ReadOnlyTool && $t->readOnly()) {
             return;
         }
 

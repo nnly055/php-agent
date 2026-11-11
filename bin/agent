@@ -54,7 +54,8 @@ $ui = new ConsoleUi($config);
 // 必须在 AgentLoop 构造之前注册（loop 构造时快照钩子列表）。
 if (!$fake && $config->permissions() === 'ask') {
     $kernel->addHook(new ConfirmHook(
-        static fn (string $tool, array $input): string => $ui->promptTool($tool, $input)
+        static fn (string $tool, array $input): string => $ui->promptTool($tool, $input),
+        $kernel->toolRegistry()
     ));
 }
 

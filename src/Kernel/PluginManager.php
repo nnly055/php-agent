@@ -9,6 +9,7 @@ use PhpAgent\Plugins\AuditPlugin;
 use PhpAgent\Plugins\CommandsPlugin;
 use PhpAgent\Plugins\CoreToolsPlugin;
 use PhpAgent\Plugins\FakePlugin;
+use PhpAgent\Plugins\McpPlugin;
 use PhpAgent\Plugins\OpenAICompatPlugin;
 use PhpAgent\Plugins\SessionPlugin;
 
@@ -66,6 +67,7 @@ final class PluginManager
             SessionPlugin::class,
             AuditPlugin::class,
             CommandsPlugin::class,
+            McpPlugin::class,
         ];
     }
 
