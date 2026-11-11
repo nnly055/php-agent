@@ -184,6 +184,33 @@ final class McpConnectionTest extends TestCase
         self::assertSame($count, $fake->requestCount);
     }
 
+    public function testJsonRpcErrorDoesNotMarkDead(): void
+    {
+        $fake = $this->makeFake([
+            $this->initResponse(),
+            ['jsonrpc' => '2.0', 'id' => 2, 'result' => ['tools' => []]],
+            // server 拒绝这一次调用（如未知工具名）
+            ['jsonrpc' => '2.0', 'id' => 3, 'error' => ['code' => -32602, 'message' => 'Unknown tool']],
+            // 重试应成功——连接仍然健康
+            ['jsonrpc' => '2.0', 'id' => 4, 'result' => ['content' => [['type' => 'text', 'text' => '重试成功']]]],
+        ]);
+        $conn = new McpConnection('fake', $fake, 5);
+        $conn->initializeAndListTools();
+
+        try {
+            $conn->callTool('x', []);
+            self::fail('应当抛出异常');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('Unknown tool', $e->getMessage());
+            // server 业务错误 ≠ 连接死亡
+            self::assertSame('connected', $conn->status());
+        }
+        // 重试仍触达 transport 且成功——连接未被误标 dead
+        $count = $fake->requestCount;
+        self::assertSame('重试成功', $conn->callTool('x', []));
+        self::assertSame($count + 1, $fake->requestCount);
+    }
+
     public function testServerErrorMessageSurfaced(): void
     {
         $fake = $this->makeFake([

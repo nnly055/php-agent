@@ -68,6 +68,7 @@ final class McpConnection
     /**
      * 调用工具并提取文本。isError / 传输失败抛 \RuntimeException
      * （ToolRegistry 统一转 'ERROR: ...' 回传模型）。
+     * server 返回 JSON-RPC error（McpRpcException）视为本次调用被拒、连接仍健康，不标记 dead。
      */
     public function callTool(string $toolName, array $arguments): string
     {
@@ -77,6 +78,9 @@ final class McpConnection
         try {
             $resp = $this->rpc('tools/call', ['name' => $toolName, 'arguments' => $arguments]);
         } catch (\RuntimeException $e) {
+            if ($e instanceof McpRpcException) {
+                throw $e;
+            }
             $this->status = 'dead';
             $this->lastError = $e->getMessage();
             throw $e;
@@ -145,7 +149,7 @@ final class McpConnection
             $msg = is_array($resp['error'])
                 ? (string) ($resp['error']['message'] ?? json_encode($resp['error'], JSON_UNESCAPED_UNICODE))
                 : (string) $resp['error'];
-            throw new \RuntimeException("MCP server '{$this->serverName}' 返回错误（{$method}）: {$msg}");
+            throw new McpRpcException("MCP server '{$this->serverName}' 返回错误（{$method}）: {$msg}");
         }
         return $resp;
     }
