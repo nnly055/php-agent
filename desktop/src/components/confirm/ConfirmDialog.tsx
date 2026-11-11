@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useAppStore } from "../../store/useAppStore";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { DiffView } from "../chat/DiffView";
 import { ShieldAlert } from "lucide-react";
@@ -30,6 +30,7 @@ export function ConfirmDialog({ onAnswer }: { onAnswer: (d: "y" | "n" | "a") => 
           <DialogTitle className="flex items-center gap-2 text-ink">
             <ShieldAlert size={18} className="text-warning" /> 工具授权请求
           </DialogTitle>
+          <DialogDescription className="text-muted">审核工具调用并决定是否授权。</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="flex items-center gap-2">

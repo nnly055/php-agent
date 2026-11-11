@@ -7,7 +7,8 @@
 **LLM 流式对话 + 工具调用循环 + 插件化持久化 + 本地 SSE 服务**。
 
 - 终端交互：`php bin/agent`，流式输出、彩色工具调用展示
-- 本地服务：`php bin/server`，内置 Web 聊天页，为将来接入 Tauri/Electron 桌面壳提供 HTTP+SSE 接口
+- 本地服务：`php bin/server`，内置 Web 聊天页，同时作为桌面壳的后端提供 HTTP+SSE 接口
+- 桌面应用：`cd desktop && npm run tauri dev`，Tauri 壳自动拉起 PHP sidecar（见「桌面应用」）
 - 多 Provider：Anthropic 原生协议 + OpenAI 兼容协议（覆盖 GLM / DeepSeek / Kimi / Qwen / OpenAI）
 - 零框架：核心代码仅依赖 curl（Fiber 流式）与 ReactPHP（本地服务）
 
@@ -80,8 +81,8 @@ AGENT_AUDIT=on          # 默认：每次工具调用/结果追加写入 ~/.php-
 （[plugins/diff/](plugins/diff/)，同时是「工具装饰器 + 生命周期钩子」双扩展点的参考实现），
 重命名 `plugin.php → plugin.php.disabled` 可停用。
 
-server 端不做交互确认（桌面壳接入后由前端实现授权 UI，diff 由前端按行上色渲染），
-审计对 CLI/server 同时生效。
+server 端通过 `confirm_request` SSE 事件 + `POST /confirm/{id}` 把授权决定交给前端
+（桌面壳已实现授权弹窗，diff 由前端按行上色渲染）；审计对 CLI/server 同时生效。
 
 ### 上下文压缩
 
@@ -187,8 +188,13 @@ server 的工具挂进工具列表（`/tools` 可见，名称形如 `mcp__<serve
 ┌────────────────────────── bin/agent (CLI) ──────────────────────────┐
 │  ConsoleUi (ANSI 流式渲染)                                           │
 └──────────────────────────────┬──────────────────────────────────────┘
+┌────────────────── desktop/ (Tauri 桌面壳) ──────────────────────────┐
+│  React 前端（流式聊天/授权弹窗/会话/workspace）                      │
+│  Rust 壳：sidecar 生命周期管理 ←HTTP+SSE→ bin/server                │
+└──────────────────────────────┬──────────────────────────────────────┘
 ┌────────────────── bin/server (本地服务) ─────────────────────────────┐
-│  AgentServer: GET / 聊天页 · POST /agent SSE 事件流 (ReactPHP+Fiber) │
+│  AgentServer: /status · /sessions · /confirm · POST /agent SSE      │
+│  （ReactPHP+Fiber，内置 Web 聊天页）                                 │
 └──────────────────────────────┬──────────────────────────────────────┘
                         AgentLoop (agent 循环)
         user 输入 → LLM 流式 → tool_use → 执行 → tool_result 回填 → …
@@ -214,13 +220,21 @@ server 的工具挂进工具列表（`/tools` 可见，名称形如 `mcp__<serve
 ## 测试
 
 ```bash
-composer test        # 或 vendor/bin/phpunit
+composer test                          # 后端：vendor/bin/phpunit（123 个测试）
+cd desktop && npm test                 # 前端：vitest（29 个测试）
+cd desktop/src-tauri && cargo test     # Rust 壳（2 个测试）
 ```
 
-101 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、
+后端 123 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、
 SSE 解析（分块/跨包/边界）、钩子管线与权限确认、插件发现与加载顺序、会话存储统一契约、
 配置解析、上下文压缩（token 估算/边界/替换/失败语义/钩子接线/节流）、
-diff 插件与 /compact 命令、MCP 客户端（stdio/HTTP 传输、连接、权限、插件与工具适配）。
+diff 插件与 /compact 命令、MCP 客户端（stdio/HTTP 传输、连接、权限、插件与工具适配）、
+本地服务（路由/CORS/确认代理/SSE 集成）。
+
+前端 29 个测试覆盖（vitest + Testing Library）：SSE 帧解析、diff 解析与渲染、
+zustand store、流式/探活 hooks、输入框、授权弹窗、会话条目、连接横幅。
+
+Rust 2 个测试覆盖：端口行解析、sidecar 真实启动/停止生命周期（含无孤儿验证）。
 
 ## SSE 接口（对接桌面前端）
 
@@ -231,11 +245,35 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 ```
 
 返回 `text/event-stream`，每帧 `data: {"type": "...", "data": {...}}`，
-事件类型与 `StreamEvent` 一致；会话历史按 `session_id` 在服务端内存中保持。
+事件类型与 `StreamEvent` 一致；会话历史按 `session_id` 经会话存储持久化
+（默认 json，`AGENT_SESSION_STORE` 一行切换）。ask 模式下工具执行前先发
+`confirm_request` 事件，客户端 `POST /confirm/{id}` 回 `{"decision":"y|n|a"}` 后继续。
+
+## 桌面应用
+
+Tauri 2 桌面壳（`desktop/`）：React 前端 + Rust 壳，复用 `php bin/server` 作为 sidecar。
+
+```bash
+cd desktop
+npm install
+npm run tauri dev
+```
+
+环境要求：Rust stable（含 cargo）+ Node 22 + 系统 PHP（≥ 8.1，curl/json/mbstring），
+项目根先 `composer install`。
+
+- 壳启动时自动拉起 `php bin/server`：注入 `AGENT_SERVER_PORT=0`（动态端口，
+  从 stdout 的 `AGENT_LISTENING port=<port>` 行解析）、`AGENT_PERMISSIONS=ask`、
+  `AGENT_UI=server`，并等待端口探活就绪
+- 前端：流式聊天 + Markdown/diff 渲染、按需授权弹窗（Y/N/A 快捷键、变更预览）、
+  会话列表/切换/新建、workspace 选择（切换即重启 sidecar）、后端断开提示与自动重连
+- 退出时按进程组整组清理 sidecar（含 MCP stdio 子进程），无孤儿进程
+- dev 模式使用系统 PHP；免 PHP 依赖的单二进制打包分发见后续路线图
 
 ## 路线图
 
-- [ ] 桌面壳：Tauri sidecar 加载 PHP 内核（或用 FrankenPHP 打包单二进制后端）
+- [x] 桌面壳 MVP：Tauri sidecar 加载 PHP 内核（dev 模式，见「桌面应用」；打包分发见下条）
+- [ ] 桌面壳打包分发：FrankenPHP 内嵌 PHP 单二进制后端（免系统 PHP 依赖）
 - [x] MCP 客户端接入（tools + stdio + Streamable HTTP，零依赖内置，见上方「MCP 工具（客户端）」）
 - [x] 流式 diff 渲染（write_file 变更可视化，授权前 diff 预览 + 结果 diff，见「权限模式与审计」）
 - [x] 长会话上下文压缩（compact 插件：阈值自动触发 + /compact 手动，见「上下文压缩」）
@@ -243,4 +281,5 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 
 已实现：会话持久化插件化（json / sqlite3 / redis / memory 一行切换）、
 钩子系统（工具授权确认、审计日志）、composer 包插件发现、插件脚手架、
-MCP 客户端（stdio + Streamable HTTP）、上下文压缩、write_file 变更可视化。
+MCP 客户端（stdio + Streamable HTTP）、上下文压缩、write_file 变更可视化、
+桌面壳 MVP（Tauri + React，dev 模式）。
