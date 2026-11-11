@@ -89,14 +89,6 @@
      流结束后再抛，保证客户端生成器永远被消费到底；
   3. postSse 的清理加兜底 try/catch，清理失败不掩盖原异常（调用方违约时放弃句柄）。
 
-### 计划
-
-- 会话持久化（SQLite）
-- 流式 diff 渲染（write_file 展示修改前后对比）
-- MCP 客户端接入（logiscape/mcp-sdk-php）
-- 长会话上下文压缩
-- TUI 升级（php-tui）、桌面壳（Tauri sidecar / FrankenPHP 打包）
-
 ## [0.1.0] - 2026-11-11
 
 首个 MVP 版本：终端/本地服务双入口的 PHP coding agent 内核。

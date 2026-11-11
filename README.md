@@ -186,8 +186,10 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 ## 路线图
 
 - [ ] 桌面壳：Tauri sidecar 加载 PHP 内核（或用 FrankenPHP 打包单二进制后端）
-- [ ] 会话持久化（SQLite）
 - [ ] 流式 diff 渲染（write_file 展示修改前后对比）
 - [ ] MCP 客户端接入（logiscape/mcp-sdk-php）
-- [ ] 树形上下文压缩（长会话摘要）
+- [ ] 长会话上下文压缩（摘要）
 - [ ] TUI 升级（php-tui）
+
+已实现：会话持久化插件化（json / sqlite3 / redis / memory 一行切换）、
+钩子系统（工具授权确认、审计日志）、composer 包插件发现、插件脚手架。
