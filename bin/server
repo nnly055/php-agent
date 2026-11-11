@@ -27,7 +27,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 $root = dirname(__DIR__);
 putenv('AGENT_UI=server'); // diff 预览钩子据此抑制 stdout echo
-$config = Config::load($root);
+$config = Config::load($root, true); // shell 权威：桌面壳注入的端口/工作目录覆盖 .env
 
 $kernel = new AgentKernel($config);
 PluginManager::load($kernel, $root);
@@ -61,13 +61,13 @@ $port = $config->serverPort();
 $socket = new SocketServer('127.0.0.1:' . $port, [], Loop::get());
 $http->listen($socket);
 
-// 端口 0：从实际绑定地址解析端口，打机器可读行供桌面壳解析
+// 实际绑定端口（0 = 自动分配，从绑定地址解析）；始终打机器可读行供桌面壳发现
 $actual = $port;
 if ($port === 0) {
     $addr = (string) $socket->getAddress(); // tcp://127.0.0.1:54321
     $actual = (int) substr($addr, (int) strrpos($addr, ':') + 1);
-    echo "AGENT_LISTENING port={$actual}\n";
 }
+echo "AGENT_LISTENING port={$actual}\n";
 
 echo "PHP Agent 本地服务已启动\n";
 echo "  网页聊天: http://127.0.0.1:{$actual}\n";
