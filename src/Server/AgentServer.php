@@ -39,6 +39,16 @@ final class AgentServer
 
     public function handle(\Psr\Http\Message\ServerRequestInterface $request): Response
     {
+        try {
+            return $this->route($request);
+        } catch (\Throwable $e) {
+            // 任何异常（如 workspace 失效、存储后端抛错）都必须走 json()，保证错误响应也带 CORS 头
+            return $this->json(500, ['error' => $e->getMessage()]);
+        }
+    }
+
+    private function route(\Psr\Http\Message\ServerRequestInterface $request): Response
+    {
         $method = $request->getMethod();
         $path = $request->getUri()->getPath();
 

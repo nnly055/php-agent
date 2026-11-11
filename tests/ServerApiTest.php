@@ -15,14 +15,16 @@ use React\Http\Message\ServerRequest;
 
 final class ServerApiTest extends TestCase
 {
-    private function server(?InMemorySessionStore $store = null): AgentServer
+    private function server(?InMemorySessionStore $store = null, ?Config $config = null): AgentServer
     {
         $store ??= new InMemorySessionStore();
         $loop = new AgentLoop(new FakeLLMClient([]), new ToolRegistry(), 'sys', 5);
         $dir = sys_get_temp_dir() . '/php-agent-srv-' . uniqid();
         mkdir($dir, 0777, true);
-        file_put_contents($dir . '/.env', "AGENT_PROVIDER=fake\nAGENT_SESSION_STORE=memory\n");
-        $config = Config::load($dir);
+        if ($config === null) {
+            file_put_contents($dir . '/.env', "AGENT_PROVIDER=fake\nAGENT_SESSION_STORE=memory\n");
+            $config = Config::load($dir);
+        }
         return new AgentServer($loop, $store, [], $dir, $config);
     }
 
@@ -75,5 +77,24 @@ final class ServerApiTest extends TestCase
         $resp = $this->server()->handle(new ServerRequest('GET', 'http://localhost/nope'));
         self::assertSame(404, $resp->getStatusCode());
         self::assertSame('*', $resp->getHeaderLine('Access-Control-Allow-Origin'));
+    }
+
+    public function testStatusExceptionReturns500WithCors(): void
+    {
+        // AGENT_WORKSPACE 指向不存在的目录：Config::workspace() 在 /status 时惰性抛异常
+        $dir = sys_get_temp_dir() . '/php-agent-srv-' . uniqid();
+        mkdir($dir, 0777, true);
+        file_put_contents($dir . '/.env', "AGENT_PROVIDER=fake\nAGENT_SESSION_STORE=memory\nAGENT_WORKSPACE=/nonexistent-" . uniqid() . "\n");
+        try {
+            $server = $this->server(null, Config::load($dir));
+            $resp = $server->handle(new ServerRequest('GET', 'http://localhost/status'));
+            self::assertSame(500, $resp->getStatusCode());
+            self::assertSame('*', $resp->getHeaderLine('Access-Control-Allow-Origin'));
+            $body = json_decode((string) $resp->getBody(), true);
+            self::assertArrayHasKey('error', $body);
+        } finally {
+            @unlink($dir . '/.env');
+            @rmdir($dir);
+        }
     }
 }
