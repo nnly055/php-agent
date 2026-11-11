@@ -9,6 +9,15 @@
 
 ### 新增
 
+- **MCP 客户端（tools + stdio + Streamable HTTP）**
+  - 工作区 `.mcp.json`（Claude Code/Cursor 兼容格式）声明 server，启动自动连接，
+    工具以 `mcp__<server>__<tool>` 挂进 ToolRegistry 供 LLM 直接调用
+  - 传输：本地 stdio 子进程（proc_open + stream_select 超时）+ 远程 Streamable HTTP
+    （curl 同步 POST，解析 JSON/SSE 双形态响应，Mcp-Session-Id 回传）；零新依赖
+  - 权限：readOnlyHint 注解工具自动放行（新增 ReadOnlyTool 标记接口 + ConfirmHook
+    动态查询 ToolRegistry），其余走 ask 确认；`/mcp` 查看状态；`AGENT_MCP=off` 禁用；
+    退出时自动清理子进程；单 server 失败不阻塞其余工具
+  - 设计文档：docs/superpowers/specs/2026-11-11-mcp-client-design.md
 - **第三方持久化插件实证 + 开发者指南**
   - 以「第三方开发者」身份完整走通接入流程：新增 MySQL 会话存储插件
     （plugins/mysql-store/，PDO MySQL、自动建库建表、自带 AGENT_MYSQL_* 配置、
