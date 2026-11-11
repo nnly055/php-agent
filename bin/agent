@@ -6,23 +6,16 @@ declare(strict_types=1);
 /**
  * PHP Agent 终端入口。
  *
- *   php bin/agent          正常启动（按 .env 的 provider）
+ *   php bin/agent          正常启动（按 .env 的 provider 与插件装配）
  *   php bin/agent --fake   离线演示（不需要 API key）
  */
 
 use PhpAgent\Agent\AgentLoop;
 use PhpAgent\Agent\DefaultSystemPrompt;
-use PhpAgent\Agent\ToolRegistry;
+use PhpAgent\Command\CommandContext;
 use PhpAgent\Config;
-use PhpAgent\LLM\AnthropicClient;
-use PhpAgent\LLM\FakeLLMClient;
-use PhpAgent\LLM\LLMClient;
-use PhpAgent\LLM\OpenAICompatClient;
-use PhpAgent\Tools\GrepTool;
-use PhpAgent\Tools\ListDirTool;
-use PhpAgent\Tools\ReadFileTool;
-use PhpAgent\Tools\RunCommandTool;
-use PhpAgent\Tools\WriteFileTool;
+use PhpAgent\Kernel\AgentKernel;
+use PhpAgent\Kernel\PluginManager;
 use PhpAgent\Ui\ConsoleUi;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -31,26 +24,14 @@ $root = dirname(__DIR__);
 $config = Config::load($root);
 $fake = in_array('--fake', $argv, true);
 
-$client = match ($fake ? 'fake' : $config->provider()) {
-    'anthropic' => new AnthropicClient($config),
-    'openai' => new OpenAICompatClient($config),
-    'fake' => FakeLLMClient::demo(),
-};
+// ── 装配：注册容器 + 插件发现 ──────────────────────────────
+$kernel = new AgentKernel($config);
+PluginManager::load($kernel, $root);
 
-if (!$fake && $config->model() === '') {
-    fwrite(STDERR, "⚠ 未配置 AGENT_MODEL，请在 .env 里设置（参考 .env.example）\n");
-}
-
-$registry = (new ToolRegistry())
-    ->register(new ReadFileTool($config->workspace()))
-    ->register(new WriteFileTool($config->workspace()))
-    ->register(new ListDirTool($config->workspace()))
-    ->register(new RunCommandTool($config->workspace()))
-    ->register(new GrepTool($config->workspace()));
-
+$client = $kernel->provider($fake ? 'fake' : $config->provider());
 $loop = new AgentLoop(
     $client,
-    $registry,
+    $kernel->toolRegistry(),
     DefaultSystemPrompt::text($config->workspace()),
     $config->maxIterations()
 );
@@ -58,8 +39,22 @@ $loop = new AgentLoop(
 $ui = new ConsoleUi($config);
 $ui->banner($fake);
 
+// ── 会话状态 ────────────────────────────────────────────────
+$store = $kernel->sessionStore();
+$sessionId = $config->sessionId();
 $messages = [];
 
+if (!$fake && $config->model() === '') {
+    fwrite(STDERR, "⚠ 未配置 AGENT_MODEL，请在 .env 里设置（参考 .env.example）\n");
+}
+
+$storeClass = get_class($store);
+$ui->info('会话存储: ' . substr($storeClass, (int) strrpos($storeClass, '\\') + 1));
+if ($store->load($sessionId) !== []) {
+    $ui->info("检测到已有会话 '{$sessionId}'：/resume 恢复继续，/new 开新会话");
+}
+
+// ── 主循环 ─────────────────────────────────────────────────
 while (true) {
     $line = $ui->readLine();
     if ($line === null) {
@@ -70,28 +65,35 @@ while (true) {
         continue;
     }
 
-    switch ($line) {
-        case '/exit':
-        case '/quit':
-            break 2;
-
-        case '/reset':
-            $messages = [];
-            $ui->info('✓ 会话已清空');
-            continue 2;
-
-        case '/help':
-            $ui->info("可用命令:\n  /reset  清空会话历史\n  /tools  列出已注册工具\n  /exit   退出\n\n内置工具: " . implode(', ', $registry->names()));
-            continue 2;
-
-        case '/tools':
-            $ui->info('已注册工具: ' . implode(', ', $registry->names()));
-            continue 2;
+    // 斜杠命令分发（/exit 是 shell 级控制流，直接处理）
+    if ($line[0] === '/') {
+        $parts = preg_split('/\s+/', substr($line, 1), 2) ?: [];
+        $name = strtolower(trim((string) ($parts[0] ?? '')));
+        if ($name === 'exit' || $name === 'quit') {
+            break;
+        }
+        $cmd = $kernel->command($name);
+        if ($cmd === null) {
+            $ui->error("未知命令 /{$name}（/help 查看可用命令）");
+            continue;
+        }
+        try {
+            $argStr = trim((string) ($parts[1] ?? ''));
+            $args = $argStr === '' ? [] : (preg_split('/\s+/', $argStr) ?: []);
+            $ui->info($cmd->execute($args, new CommandContext($kernel, $messages, $sessionId)));
+        } catch (\Throwable $e) {
+            $ui->error($e->getMessage());
+        }
+        continue;
     }
 
+    // 正常任务：跑 agent 循环，成功后整段保存会话
+    $snapshot = $messages;
     try {
         $loop->run($messages, $line, $ui->handleEvent(...));
+        $store->save($sessionId, $messages);
     } catch (\Throwable $e) {
+        $messages = $snapshot; // 回滚本轮，避免历史里残留半条消息
         $ui->error($e->getMessage());
     }
 }

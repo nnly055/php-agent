@@ -7,6 +7,27 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **插件架构 Phase 1**（设计文档 [docs/plugin-design.md](docs/plugin-design.md)）
+  - Kernel 层：`Plugin` 接口 + `AgentKernel` 注册容器 + `PluginManager` 发现加载
+    （内置 → 项目 `plugins/` 目录，`AGENT_PLUGINS` 可 off/白名单过滤，composer 包发现留待 Phase 3）
+  - 五个扩展点：`registerProvider`（惰性工厂、后者覆盖）/ `registerTool` / `setSessionStore` /
+    `registerCommand` / `addHook`（钩子接线在 Phase 2）
+  - **会话持久化插件化**：`SessionStore` 接口 + 四实现——`InMemory`（不持久化）、
+    `JsonFile`（默认，~/.php-agent/sessions/，原子写、人可读）、`Sqlite3`（单文件 db）、
+    `Redis`（多进程/常驻场景）；`AGENT_SESSION_STORE` 一行切换
+  - 内置插件化：CoreTools / Anthropic / OpenAICompat / Fake / Session / Commands 六个内置插件；
+    `bin/agent`、`bin/server` bootstrap 收敛为「建 kernel → 加载插件 → 取用」
+  - CLI 新命令：`/sessions`、`/resume [id]`、`/new`、`/plugins`；每轮任务后自动保存会话，
+    失败回滚不污染历史；跨进程 `/resume` 续聊
+  - Server：内存数组换 `SessionStore`，重启不丢会话
+  - 用户示例插件 `plugins/example/`（重命名 plugin.php.disabled 启用）
+  - 测试 14 个（原 6 + 新 8）：存储统一契约（含 redis 探活跳过）、插件发现/off/白名单、
+    provider 惰性与覆盖语义
+- **验证**：CLI 跨进程 /resume 恢复 6 条历史 ✓；server 重启后同 session 继续对话 ✓；
+  DeepSeek deepseek-flash 真实回归（工具调用 + 流式）✓
+
 ### 修复（DeepSeek 真实环境实测发现）
 
 - **curl 句柄在回调上下文中被关闭**（`curl_close(): Attempt to close cURL handle from a callback`）：

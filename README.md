@@ -50,10 +50,34 @@ php bin/server
 
 | 命令 | 说明 |
 |---|---|
-| `/help` | 帮助 |
+| `/help` | 帮助（列出全部命令，含插件注册的） |
 | `/tools` | 列出已注册工具 |
-| `/reset` | 清空会话历史 |
+| `/plugins` | 已加载插件 + 当前会话存储 + provider |
+| `/sessions` | 列出最近会话 |
+| `/resume [id]` | 恢复会话（无参数=最近一个） |
+| `/new` | 开启新会话 |
+| `/reset` | 清空当前会话历史 |
 | `/exit` | 退出（Ctrl+D 同效） |
+
+会话在每轮任务结束后自动保存；CLI 重进 `/resume` 续聊，server 重启不丢会话。
+
+## 插件系统
+
+核心只提供「接口 + 注册容器 + 发现机制」，五个扩展点全部可插拔：
+LLM provider、工具、**会话持久化**、斜杠命令、生命周期钩子（Phase 2 接线）。
+
+```bash
+# 切换持久化后端（.env 一行）
+AGENT_SESSION_STORE=json|memory|sqlite3|redis
+```
+
+设计文档见 [docs/plugin-design.md](docs/plugin-design.md)。写一个项目插件只需两步：
+
+1. `plugins/<name>/src/MyPlugin.php` 实现 `PhpAgent\Kernel\Plugin`
+2. `plugins/<name>/plugin.php` 返回插件类名（[完整示例](plugins/example/)，把
+   `plugin.php.disabled` 重命名为 `plugin.php` 即可启用）
+
+后注册者覆盖同 id——所以插件也能替换内置实现（如自定义 SessionStore）。
 
 ## 内置工具
 

@@ -101,4 +101,57 @@ final class Config
     {
         return max(1, (int) ($this->env['AGENT_SERVER_PORT'] ?? 8091));
     }
+
+    // ── 插件与会话 ──────────────────────────────────────────
+
+    /** 会话存储实现：memory | json | sqlite3 | redis（SessionPlugin 按此装配） */
+    public function sessionStore(): string
+    {
+        $s = strtolower($this->env['AGENT_SESSION_STORE'] ?? 'json');
+        return in_array($s, ['memory', 'json', 'sqlite3', 'redis'], true) ? $s : 'json';
+    }
+
+    /** CLI 默认会话 id */
+    public function sessionId(): string
+    {
+        $id = trim($this->env['AGENT_SESSION_ID'] ?? 'default');
+        return $id !== '' ? $id : 'default';
+    }
+
+    /** 会话存储目录（json/sqlite3 用），null = ~/.php-agent/sessions */
+    public function sessionDir(): ?string
+    {
+        return $this->env['AGENT_SESSION_DIR'] ?? null;
+    }
+
+    public function redisHost(): string
+    {
+        return $this->env['AGENT_REDIS_HOST'] ?? '127.0.0.1';
+    }
+
+    public function redisPort(): int
+    {
+        return max(1, (int) ($this->env['AGENT_REDIS_PORT'] ?? 6379));
+    }
+
+    public function redisDb(): int
+    {
+        return max(0, (int) ($this->env['AGENT_REDIS_DB'] ?? 0));
+    }
+
+    public function redisPassword(): ?string
+    {
+        return ($this->env['AGENT_REDIS_PASSWORD'] ?? '') ?: null;
+    }
+
+    /**
+     * 插件加载开关：
+     *   '' / on = 全部加载（内置 + composer + 项目 plugins/）
+     *   off     = 只加载内置
+     *   逗号列表 = 内置 + 仅列表中的项目插件（按 name 匹配）
+     */
+    public function pluginsSwitch(): string
+    {
+        return strtolower(trim($this->env['AGENT_PLUGINS'] ?? ''));
+    }
 }

@@ -1,0 +1,17 @@
+<?php
+
+/**
+ * 用户插件示例 —— 启用方法：把本文件重命名为 plugin.php
+ *
+ * 插件目录结构：
+ *   plugins/example/
+ *   ├── plugin.php          ← 本文件（返回插件类名；重命名后即启用）
+ *   └── src/ExamplePlugin.php
+ *
+ * 插件可以注册：工具（registerTool）、LLM provider（registerProvider）、
+ * 会话存储（setSessionStore）、钩子（addHook）、斜杠命令（registerCommand）。
+ */
+
+require_once __DIR__ . '/src/ExamplePlugin.php';
+
+return PhpAgent\Plugin\Example\ExamplePlugin::class;

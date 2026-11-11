@@ -6,6 +6,7 @@ namespace PhpAgent\Server;
 
 use PhpAgent\Agent\AgentLoop;
 use PhpAgent\LLM\StreamEvent;
+use PhpAgent\Session\SessionStore;
 use React\Http\Message\Response;
 use React\Stream\ThroughStream;
 
@@ -16,16 +17,15 @@ use React\Stream\ThroughStream;
  *   POST /agent       → SSE 流式对话，body: {"message": "...", "session_id": "..."}
  *                       每条事件: data: {"type": "...", "data": {...}}\n\n
  *
+ * 会话历史通过 SessionStore 插件持久化（进程重启不丢）。
  * Agent 循环在 Fiber 中执行，每个事件 write 后用 delay(0) 让出事件循环刷写 socket，
  * 这样浏览器就能逐 token 收到流式响应。
  */
 final class AgentServer
 {
-    /** @var array<string, array> session_id => 归一化消息历史 */
-    private array $sessions = [];
-
     public function __construct(
         private readonly AgentLoop $loop,
+        private readonly SessionStore $store,
         private readonly string $publicDir,
     ) {
     }
@@ -62,20 +62,18 @@ final class AgentServer
         }
 
         $sid = (string) ($body['session_id'] ?? 'default');
-        $messages = &$this->sessions[$sid];
-        if (!is_array($messages)) {
-            $messages = [];
-        }
+        $messages = $this->store->load($sid);
 
         $stream = new ThroughStream();
 
-        \React\Async\async(function () use ($stream, &$messages, $message): void {
+        \React\Async\async(function () use ($stream, $sid, $message, $messages): void {
             try {
                 $onEvent = function (StreamEvent $e) use ($stream): void {
                     $stream->write($this->sseFrame($e));
                     \React\Async\delay(0.001); // 让出事件循环，把已写入内容刷给客户端
                 };
                 $final = $this->loop->run($messages, $message, $onEvent);
+                $this->store->save($sid, $messages); // 仅成功时保存，失败保持原状态
                 $stream->write($this->sseFrame(StreamEvent::finalAnswer($final)));
                 $stream->end();
             } catch (\Throwable $e) {
@@ -91,16 +89,11 @@ final class AgentServer
         ], $stream);
     }
 
-    private function sseFrame(StreamEvent $e, ?string $event = null): string
+    private function sseFrame(StreamEvent $e): string
     {
-        $line = '';
-        if ($event !== null) {
-            $line .= "event: {$event}\n";
-        }
-        $line .= 'data: ' . json_encode(
+        return 'data: ' . json_encode(
             ['type' => $e->type, 'data' => $e->data],
             JSON_UNESCAPED_UNICODE
         ) . "\n\n";
-        return $line;
     }
 }
