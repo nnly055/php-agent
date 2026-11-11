@@ -79,10 +79,21 @@ final class StdioTransportTest extends TestCase
 
     public function testNonexistentCommandThrowsOnRequest(): void
     {
-        $t = new StdioTransport('definitely-not-a-real-cmd-xyz');
-        $this->expectException(\RuntimeException::class);
-        $t->request(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize', 'params' => []], 2);
-        $t->close();
+        // 平台差异：proc_open 对不存在命令，有的环境构造期直接失败、
+        // 有的经 sh -c 兜底后请求期 EOF 失败——两个阶段都必须抛 RuntimeException。
+        $threw = null;
+        try {
+            $t = new StdioTransport('definitely-not-a-real-cmd-xyz');
+            try {
+                $t->request(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize', 'params' => []], 2);
+                self::fail('不存在命令必须在构造或请求阶段抛 RuntimeException');
+            } finally {
+                $t->close();
+            }
+        } catch (\RuntimeException $e) {
+            $threw = $e;
+        }
+        self::assertNotNull($threw);
     }
 
     public function testPartialLineStillTimesOut(): void
