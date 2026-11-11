@@ -6,7 +6,6 @@ namespace PhpAgent\Tests;
 
 use PhpAgent\LLM\FakeLLMClient;
 use PhpAgent\LLM\StreamEvent;
-use PhpAgent\Plugin\Compact\CompactionResult;
 use PhpAgent\Plugin\Compact\Compactor;
 use PHPUnit\Framework\TestCase;
 

@@ -95,7 +95,9 @@ AGENT_COMPACT_THRESHOLD=0.8     # 估算达到窗口 80% 时自动压缩
 ```
 
 token 为保守估算（字符数 ÷ 2.5，无 tokenizer）；压缩就地修改历史，
-持久化与 /resume 自动一致。停用：重命名 plugins/compact/plugin.php 为
+持久化与 /resume 自动一致。`/compact` 与斜杠命令为 CLI 专属（server 无命令分发）；
+就地压缩的历史在下一次成功对话轮结束后落盘（`bin/agent` 每轮成功后自动保存）。
+停用：重命名 plugins/compact/plugin.php 为
 plugin.php.disabled。该插件同时是 `before_llm_request` 钩子
 （引用裁剪历史）+ `/compact` 命令双扩展点的参考实现。
 
@@ -193,7 +195,10 @@ composer 包的实现。`AGENT_PLUGINS=off` 关闭 2/3 层；逗号列表按插�
 composer test        # 或 vendor/bin/phpunit
 ```
 
-6 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、SSE 解析（分块/跨包/边界）。
+58 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、
+SSE 解析（分块/跨包/边界）、钩子管线与权限确认、插件发现与加载顺序、会话存储统一契约、
+配置解析、上下文压缩（token 估算/边界/替换/失败语义/钩子接线/节流）、
+diff 插件与 /compact 命令。
 
 ## SSE 接口（对接桌面前端）
 

@@ -47,9 +47,10 @@ final class AgentLoop
             try {
                 HookPipeline::fire($this->hooks, 'before_llm_request', $hookPayload);
             } catch (HookVetoException $e) {
+                // veto 时故意不发 notes：本轮会被入口回滚，发出『已压缩』类提示会误导用户
                 throw new LLMException('本次 LLM 请求被钩子否决: ' . $e->getMessage());
             }
-            foreach ($notes as $note) {
+            foreach ((array) $notes as $note) {
                 $emit(StreamEvent::notice((string) $note));
             }
             unset($hookPayload, $notes);

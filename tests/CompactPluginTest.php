@@ -20,7 +20,8 @@ require_once dirname(__DIR__) . '/plugins/compact/src/CompactHook.php';
 require_once dirname(__DIR__) . '/plugins/compact/src/CompactPlugin.php';
 
 /**
- * compact 插件：钩子接线（估算→压缩→notes 写穿）、失败节流、provider 落选逻辑。
+ * compact 插件：钩子接线（估算→压缩→notes 写穿）、失败节流。
+ * 全部走显式注入工厂；生产装配路径（null 参数 → Config 解析 + provider 回退）的覆盖见后续跟进。
  */
 final class CompactPluginTest extends TestCase
 {
