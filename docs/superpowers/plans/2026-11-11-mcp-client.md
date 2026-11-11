@@ -885,17 +885,6 @@ final class StdioTransport implements Transport
 }
 ```
 
-注意：`env()` 不存在——构造器里那行应为：
-
-```php
-        $baseEnv = $env === [] ? null : array_merge(
-            is_array($_ENV) ? $_ENV : [],
-            $env
-        );
-```
-
-即 `proc_open` 第 5 参数用 `$baseEnv`（`null` = 继承当前进程环境）。写入实现时直接用这个版本。
-
 - [ ] **Step 5: 运行确认通过**
 
 Run: `vendor/bin/phpunit tests/StdioTransportTest.php`
