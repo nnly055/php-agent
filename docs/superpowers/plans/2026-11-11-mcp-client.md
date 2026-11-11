@@ -1783,7 +1783,7 @@ final class McpToolAdapterTest extends TestCase
 
     public function testSanitize(): void
     {
-        self::assertSame('my_server-tool1', McpToolAdapter::sanitize('my server-tool.1'));
+        self::assertSame('my_server-tool_1', McpToolAdapter::sanitize('my server-tool.1'));
         self::assertSame('ok-name_2', McpToolAdapter::sanitize('ok-name_2'));
     }
 
