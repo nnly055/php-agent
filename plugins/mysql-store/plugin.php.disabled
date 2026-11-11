@@ -1,0 +1,7 @@
+<?php
+
+// MySQL 持久化插件（第三方接入示例）——本文件被 PluginManager 的项目插件发现机制自动加载
+require_once __DIR__ . '/src/MysqlSessionStore.php';
+require_once __DIR__ . '/src/MysqlStorePlugin.php';
+
+return MysqlStore\MysqlStorePlugin::class;

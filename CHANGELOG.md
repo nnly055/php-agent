@@ -9,6 +9,16 @@
 
 ### 新增
 
+- **第三方持久化插件实证 + 开发者指南**
+  - 以「第三方开发者」身份完整走通接入流程：新增 MySQL 会话存储插件
+    （plugins/mysql-store/，PDO MySQL、自动建库建表、自带 AGENT_MYSQL_* 配置、
+    惰性连接），不改内核一行代码即覆盖内置存储
+  - 实证：加载后「会话存储: MysqlSessionStore」✓；对话落库（default · 6 条）✓；
+    新进程 /sessions + /resume 从 MySQL 恢复 ✓
+  - 参考实现的 plugin.php 默认为 disabled（避免要求本机 MySQL），启用即生效
+  - 新增 docs/plugin-dev-guide.md：扩展点契约、最小接入步骤、composer 分发方式、
+    覆盖语义与陷阱约定
+
 - **插件架构 Phase 3：composer 包发现 + 插件脚手架**
   - `ComposerPluginDiscovery`：第三方包在 composer.json 声明
     `"extra": { "php-agent": { "plugins": ["Vendor\\Plugin\\Class"] } }`，

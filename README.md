@@ -115,6 +115,9 @@ php bin/agent --plugin:new my-tool
 内置 → composer 包 → 项目 `plugins/`，后注册者覆盖同 id——所以项目插件可以覆盖
 composer 包的实现。`AGENT_PLUGINS=off` 关闭 2/3 层；逗号列表按插件 name 白名单过滤。
 
+给第三方开发者的完整接入手册（含 MySQL 持久化插件参考实现）见
+[docs/plugin-dev-guide.md](docs/plugin-dev-guide.md)。
+
 ## 内置工具
 
 | 工具 | 功能 | 安全约束 |
