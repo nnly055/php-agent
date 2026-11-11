@@ -35,14 +35,25 @@ final class AgentLoop
         $messages[] = ['role' => 'user', 'content' => [['type' => 'text', 'text' => $userInput]]];
 
         for ($iteration = 1; $iteration <= $this->maxIterations; $iteration++) {
-            // 钩子点：before_llm_request —— payload 以引用携带 messages，可做上下文裁剪/注入
-            $hookPayload = ['messages' => &$messages, 'iteration' => $iteration];
+            // 钩子点：before_llm_request —— payload 以引用携带 messages（可做上下文裁剪/注入）
+            // 与 notes（钩子→UI 通知通道，如压缩提示）；fire 是值传参，但引用元素写穿
+            $notes = [];
+            $hookPayload = [
+                'messages' => &$messages,
+                'notes' => &$notes,
+                'system' => $this->system,
+                'iteration' => $iteration,
+            ];
             try {
                 HookPipeline::fire($this->hooks, 'before_llm_request', $hookPayload);
             } catch (HookVetoException $e) {
+                // veto 时故意不发 notes：本轮会被入口回滚，发出『已压缩』类提示会误导用户
                 throw new LLMException('本次 LLM 请求被钩子否决: ' . $e->getMessage());
             }
-            unset($hookPayload);
+            foreach ((array) $notes as $note) {
+                $emit(StreamEvent::notice((string) $note));
+            }
+            unset($hookPayload, $notes);
 
             [$text, $assistantBlocks] = $this->oneRound($messages);
 

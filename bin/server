@@ -35,7 +35,8 @@ $loop = new AgentLoop(
     $client,
     $kernel->toolRegistry(),
     DefaultSystemPrompt::text($config->workspace()),
-    $config->maxIterations()
+    $config->maxIterations(),
+    $kernel->hooks() // 钩子快照：内置插件（审计）+ compact 自动压缩（server 不注册 ConfirmHook，无交互确认）
 );
 
 $storeClass = get_class($kernel->sessionStore());

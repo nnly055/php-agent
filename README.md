@@ -83,6 +83,25 @@ AGENT_AUDIT=on          # 默认：每次工具调用/结果追加写入 ~/.php-
 server 端不做交互确认（桌面壳接入后由前端实现授权 UI，diff 由前端按行上色渲染），
 审计对 CLI/server 同时生效。
 
+### 上下文压缩
+
+会话历史增长到接近模型窗口时，`compact` 插件会在下一轮请求前自动把早期历史
+用当前 LLM 压缩成一条摘要（保留当前任务原文，绝不切开工具调用配对），
+CLI/Web 都会收到 ℹ 提示；`/compact` 可随时手动触发。
+
+```bash
+AGENT_CONTEXT_TOKENS=128000     # 模型上下文窗口（按所用模型调整）
+AGENT_COMPACT_THRESHOLD=0.8     # 估算达到窗口 80% 时自动压缩
+# AGENT_COMPACT_PROVIDER=       # 压缩用 provider，空 = AGENT_PROVIDER；离线演示设 fake
+```
+
+token 为保守估算（字符数 ÷ 2.5，无 tokenizer）；压缩就地修改历史，
+持久化与 /resume 自动一致。`/compact` 与斜杠命令为 CLI 专属（server 无命令分发）；
+就地压缩的历史在下一次成功对话轮结束后落盘（`bin/agent` 每轮成功后自动保存）。
+停用：重命名 plugins/compact/plugin.php 为
+plugin.php.disabled。该插件同时是 `before_llm_request` 钩子
+（引用裁剪历史）+ `/compact` 命令双扩展点的参考实现。
+
 ## 插件系统
 
 核心只提供「接口 + 注册容器 + 发现机制」，五个扩展点全部可插拔：
@@ -198,7 +217,10 @@ server 的工具挂进工具列表（`/tools` 可见，名称形如 `mcp__<serve
 composer test        # 或 vendor/bin/phpunit
 ```
 
-72 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、SSE 解析（分块/跨包/边界）。
+101 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、
+SSE 解析（分块/跨包/边界）、钩子管线与权限确认、插件发现与加载顺序、会话存储统一契约、
+配置解析、上下文压缩（token 估算/边界/替换/失败语义/钩子接线/节流）、
+diff 插件与 /compact 命令、MCP 客户端（stdio/HTTP 传输、连接、权限、插件与工具适配）。
 
 ## SSE 接口（对接桌面前端）
 

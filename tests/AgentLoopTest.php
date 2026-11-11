@@ -122,4 +122,36 @@ final class AgentLoopTest extends TestCase
         $this->expectExceptionMessage('boom');
         $loop->run($messages, 'test');
     }
+
+    public function testHookNotesAreEmittedAsNoticeEvents(): void
+    {
+        // 钩子向 payload['notes']（引用槽）追加文本 → 循环应产出 notice 事件
+        $hook = new class implements \PhpAgent\Hook\AgentHook {
+            public function events(): array
+            {
+                return ['before_llm_request'];
+            }
+
+            public function handle(string $event, array $payload): void
+            {
+                $payload['notes'][] = '测试通知';
+            }
+        };
+
+        $fake = new FakeLLMClient([[StreamEvent::text('ok'), StreamEvent::end('end_turn')]]);
+        $loop = new AgentLoop($fake, new ToolRegistry(), 'test-system', 5, [$hook]);
+
+        $messages = [];
+        $events = [];
+        $loop->run($messages, 'hi', static function (StreamEvent $e) use (&$events): void {
+            $events[] = $e;
+        });
+
+        $notices = array_values(array_filter(
+            $events,
+            static fn (StreamEvent $e) => $e->type === 'notice'
+        ));
+        self::assertCount(1, $notices);
+        self::assertSame('测试通知', $notices[0]->data['text']);
+    }
 }

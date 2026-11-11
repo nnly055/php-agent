@@ -184,4 +184,26 @@ final class Config
     {
         return $this->env['AGENT_AUDIT_DIR'] ?? null;
     }
+
+    // ── 上下文压缩（compact 插件）────────────────────────────
+
+    /** 模型上下文窗口 token 数（自动压缩阈值基数），按所用模型在 .env 调整 */
+    public function contextTokens(): int
+    {
+        $v = filter_var($this->env['AGENT_CONTEXT_TOKENS'] ?? null, FILTER_VALIDATE_INT);
+        return ($v !== false && $v > 0) ? $v : 128000;
+    }
+
+    /** 自动压缩阈值：估算 token 达到窗口该比例时触发（0 < t ≤ 1，越界回落默认） */
+    public function compactThreshold(): float
+    {
+        $v = filter_var($this->env['AGENT_COMPACT_THRESHOLD'] ?? null, FILTER_VALIDATE_FLOAT);
+        return ($v !== false && $v > 0 && $v <= 1) ? (float) $v : 0.8;
+    }
+
+    /** 压缩摘要请求所用 provider id，空 = AGENT_PROVIDER；--fake 离线演示设为 fake */
+    public function compactProvider(): string
+    {
+        return trim($this->env['AGENT_COMPACT_PROVIDER'] ?? '');
+    }
 }

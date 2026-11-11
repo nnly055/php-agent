@@ -16,6 +16,7 @@
   .msg.user { background:#1f6feb33; border:1px solid #1f6feb55; align-self:flex-end; }
   .msg.assistant { background:var(--panel); border:1px solid var(--border); align-self:flex-start; width:calc(100% - 40px); max-width:860px; }
   .msg.error { color:var(--red); }
+  .msg.notice { color:var(--accent); border:1px dashed var(--border); align-self:flex-start; }
   .tool { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; background:#21262d; border:1px solid var(--border); border-left:3px solid var(--yellow); border-radius:6px; padding:8px 12px; margin:8px 0; color:var(--dim); }
   .tool b { color:var(--yellow); font-weight:600; }
   .tool .args { color:var(--text); }
@@ -152,6 +153,12 @@ async function send_() {
             case 'final':
               bubble.insertBefore(document.createTextNode('\n' + d.text), cursor);
               scroll(); break;
+            case 'notice': {
+              const el = document.createElement('div');
+              el.className = 'msg notice';
+              el.textContent = 'ℹ ' + d.text;
+              chat.appendChild(el); scroll(); break;
+            }
             case 'error': {
               const el = document.createElement('div');
               el.className = 'msg error';

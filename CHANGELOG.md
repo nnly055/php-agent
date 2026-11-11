@@ -9,6 +9,17 @@
 
 ### 新增
 
+- **上下文压缩（compact 插件）**
+  - plugins/compact/：`Compactor`（保守 token 估算 + 任务起点边界 + LLM 摘要
+    就地替换，保留当前任务原文、不切开工具配对）+ `CompactHook`
+    （`before_llm_request` 自动阈值触发，失败节流到下一任务）+ `/compact` 手动命令
+  - 核心：`before_llm_request` payload 增加 notes/system 引用槽，
+    notes 经新增 `notice` 流事件直达 CLI/Web UI（钩子→UI 通知通用通道）
+  - 配置：`AGENT_CONTEXT_TOKENS` / `AGENT_COMPACT_THRESHOLD` / `AGENT_COMPACT_PROVIDER`
+  - 同时作为 `before_llm_request` + `registerCommand` 双扩展点的官方参考实现
+  - 测试 58/58（+20）：覆盖 notice 通道、Config 三项、Compactor 边界/替换/失败语义、
+    钩子接线与节流、/compact 命令
+
 - **write_file 变更可视化（diff 插件）**
   - plugins/diff/：`DiffWriteFileTool`（组合装饰器，同名覆盖内置 write_file，
     覆盖已有文件时返回 ANSI 红绿 unified diff）+ `DiffPreviewHook`

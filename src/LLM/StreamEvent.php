@@ -15,6 +15,7 @@ namespace PhpAgent\LLM;
  *   tool_result       {toolName, result}
  *   message_end       {stopReason}
  *   error             {message}
+ *   notice            {text}         钩子向 UI 的通知（如上下文压缩）
  */
 final class StreamEvent
 {
@@ -66,5 +67,11 @@ final class StreamEvent
     public static function error(string $message): self
     {
         return new self('error', ['message' => $message]);
+    }
+
+    /** 钩子向 UI 的通知（如上下文压缩、审计提示） */
+    public static function notice(string $text): self
+    {
+        return new self('notice', ['text' => $text]);
     }
 }

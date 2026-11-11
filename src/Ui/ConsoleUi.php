@@ -118,6 +118,12 @@ final class ConsoleUi
                 fflush(STDOUT);
                 break;
 
+            case 'notice':
+                $this->resetTextState();
+                echo "\n  " . self::CYAN . 'ℹ ' . $ev->data['text'] . self::RESET;
+                fflush(STDOUT);
+                break;
+
             case 'message_end':
                 $this->resetTextState();
                 echo "\n";

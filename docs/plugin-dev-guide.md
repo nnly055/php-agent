@@ -14,6 +14,10 @@
 | 斜杠命令 | `registerCommand(name, cmd)` | CLI 里 `/xxx` 触发 |
 | 生命周期钩子 | `addHook(AgentHook)` | 权限确认、审计、上下文注入等 |
 
+钩子扩展点的参考实现：[plugins/compact/](../plugins/compact/)（估算超阈值就在
+`before_llm_request` 钩子里裁剪历史，并通过 `payload['notes']` 引用槽向 UI 发
+notice 通知；失败节流见 `CompactHook`）。
+
 ## 2. 最小接入步骤（项目内使用）
 
 ```
