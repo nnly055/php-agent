@@ -4,19 +4,21 @@
 declare(strict_types=1);
 
 /**
- * PHP Agent 本地服务入口（桌面前端对接面）。
+ * PHP Agent 本地服务入口（桌面 sidecar / Web 对接面）。
  *
  *   php bin/server                        按 .env 启动
- *   AGENT_PROVIDER=fake php bin/server   离线启动
- *   浏览器打开 http://127.0.0.1:8091
+ *   AGENT_SERVER_PORT=0 php bin/server    自动选端口（桌面壳用），stdout 打 AGENT_LISTENING port=<port>
+ *   AGENT_PROVIDER=fake php bin/server    离线启动
  */
 
 use PhpAgent\Agent\AgentLoop;
 use PhpAgent\Agent\DefaultSystemPrompt;
 use PhpAgent\Config;
+use PhpAgent\Hook\ConfirmHook;
 use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\Kernel\PluginManager;
 use PhpAgent\Server\AgentServer;
+use PhpAgent\Server\ConfirmBroker;
 use React\EventLoop\Loop;
 use React\Http\HttpServer;
 use React\Socket\SocketServer;
@@ -24,34 +26,55 @@ use React\Socket\SocketServer;
 require __DIR__ . '/../vendor/autoload.php';
 
 $root = dirname(__DIR__);
+putenv('AGENT_UI=server'); // diff 预览钩子据此抑制 stdout echo
 $config = Config::load($root);
 
-// ── 装配：注册容器 + 插件发现 ──────────────────────────────
 $kernel = new AgentKernel($config);
 PluginManager::load($kernel, $root);
 
 $client = $kernel->provider($config->provider());
+
+// 授权确认：ask 模式装 ConfirmHook，prompt 走 HTTP（ConfirmBroker）
+$broker = null;
+$hooks = $kernel->hooks();
+if ($config->permissions() === 'ask') {
+    $broker = new ConfirmBroker(120.0, $config->workspace());
+    $hooks[] = new ConfirmHook(
+        static fn (string $tool, array $input): string => $broker->request($tool, $input),
+        $kernel->toolRegistry()
+    );
+}
+
 $loop = new AgentLoop(
     $client,
     $kernel->toolRegistry(),
     DefaultSystemPrompt::text($config->workspace()),
     $config->maxIterations(),
-    $kernel->hooks() // 钩子快照：内置插件（审计）+ compact 自动压缩（server 不注册 ConfirmHook，无交互确认）
+    $hooks
 );
 
 $storeClass = get_class($kernel->sessionStore());
-$server = new AgentServer($loop, $kernel->sessionStore(), $kernel->hooks(), $root . '/public');
+$server = new AgentServer($loop, $kernel->sessionStore(), $hooks, $root . '/public', $config, $broker);
 
 $http = new HttpServer(Loop::get(), $server->handle(...));
 $port = $config->serverPort();
 $socket = new SocketServer('127.0.0.1:' . $port, [], Loop::get());
 $http->listen($socket);
 
+// 端口 0：从实际绑定地址解析端口，打机器可读行供桌面壳解析
+$actual = $port;
+if ($port === 0) {
+    $addr = (string) $socket->getAddress(); // tcp://127.0.0.1:54321
+    $actual = (int) substr($addr, (int) strrpos($addr, ':') + 1);
+    echo "AGENT_LISTENING port={$actual}\n";
+}
+
 echo "PHP Agent 本地服务已启动\n";
-echo "  网页聊天: http://127.0.0.1:{$port}\n";
-echo "  SSE 接口: POST http://127.0.0.1:{$port}/agent  {\"message\": \"...\", \"session_id\": \"...\"}\n";
+echo "  网页聊天: http://127.0.0.1:{$actual}\n";
+echo "  SSE 接口: POST http://127.0.0.1:{$actual}/agent  {\"message\": \"...\", \"session_id\": \"...\"}\n";
 echo "  provider: {$config->provider()}  model: " . ($config->model() ?: '(未配置)') . "\n";
 echo '  会话存储: ' . substr($storeClass, (int) strrpos($storeClass, '\\') + 1) . "\n";
+echo "  权限模式: {$config->permissions()}\n";
 echo "Ctrl+C 退出\n";
 
 Loop::get()->run();
