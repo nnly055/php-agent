@@ -24,6 +24,11 @@ final class ToolRegistry
         return array_keys($this->tools);
     }
 
+    public function find(string $name): ?Tool
+    {
+        return $this->tools[$name] ?? null;
+    }
+
     /** @return array 工具规格（Anthropic 形态，OpenAI 客户端会自行转换） */
     public function specs(): array
     {
