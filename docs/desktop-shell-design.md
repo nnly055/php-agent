@@ -1,5 +1,11 @@
 # 桌面壳架构设计（方案 B：每会话一进程）
 
+> **实现注记（2026-11-12）**：桌面壳 MVP 已交付（`desktop/`，Tauri 2 + React/shadcn），
+> 实际采用的是**单 PHP sidecar（`bin/server` + AGENT_UI=server + ConfirmBroker HTTP 授权）**
+> 而非本文的每会话一进程方案——单用户场景下单 sidecar 足够，且链路更短（见 README「桌面应用」）。
+> 本文档保留为**多会话进程隔离的演进路线**：当「多会话并行互不阻塞 / 会话级崩溃隔离 /
+> pi 式 subagent 进程内嵌套」成为需求时，按本文实现 `bin/session-worker`。
+
 > 目标：给现有 PHP agent 内核套 Tauri 桌面壳，多会话并行、权限交互、diff 可视化全部上桌面。
 > 核心决策：**会话进程隔离**——每个会话一个无头 PHP 进程，Tauri(Rust) 直接管理进程池。
 

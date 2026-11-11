@@ -7,6 +7,27 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-12
+
+> Tauri 2 桌面壳 MVP：React/shadcn 前端 + Rust 壳 + PHP sidecar，复用全部内核能力。
+> 测试 101 → 123（PHP）+ 31（前端 vitest）+ 2（Rust cargo）。
+
+### 新增
+
+- **桌面应用（desktop/，Tauri 2）**
+  - 架构：React + shadcn/ui 前端，Rust 壳把 `php bin/server` 作为 sidecar 管理
+    （spawn/健康探活 4s 超时/SIGINT+SIGTERM 清理防孤儿进程）
+  - 复用内核：HTTP+SSE 接口、插件体系、权限确认、审计、diff 全部生效；
+    server 端授权经 `ConfirmBroker` 变成 SSE `confirm_request` 事件
+  - 聊天流：流式 Markdown 渲染、工具调用卡片（含红绿 diff 视图）、
+    ℹ 系统提示（notice 事件）
+  - 授权弹窗：diff 变更预览 + Y/N/A/Esc 全键盘操作（ConfirmDialog + 9 个组件测试）
+  - 会话侧栏：切换/删除（二次确认 alert-dialog）、回合结束自动刷新、PHP 象欢迎空态
+  - 连接 UX：断开横幅 + 自动重连、/status 活性轮询崩溃检测、pre-ready 重试屏、
+    切会话中止在途流
+  - 详见 README「桌面应用」；架构演进路线（多会话进程隔离）见
+    docs/desktop-shell-design.md
+
 ## [0.2.0] - 2026-11-11
 
 > 插件架构三阶段 + MCP 客户端 + 上下文压缩 + write_file 变更可视化。
@@ -176,6 +197,7 @@
 - 端到端（fake provider）：写文件 → 运行 `php demo/hello.php` → 输出 `Hello from PHP Agent!`（exit 0）
 - SSE 服务：`POST /agent` 完整事件流（tool_use → result 回填 → 流式文本 → final 帧）
 
-[Unreleased]: https://github.com/nnly055/php-agent/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/nnly055/php-agent/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/nnly055/php-agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nnly055/php-agent/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nnly055/php-agent/releases/tag/v0.1.0
