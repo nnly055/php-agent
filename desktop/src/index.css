@@ -1,2 +1,42 @@
-:root { color-scheme: dark; }
-body { margin: 0; background: #0B0D12; font-family: system-ui, sans-serif; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0b0d12;
+  --surface: #141821;
+  --elevated: #1a1f2b;
+  --primary: #8b8df6;
+  --primary-deep: #5b5bd6;
+  --info: #38bdf8;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --thinking: #e879f9;
+  --text: #e8eaf2;
+  --muted: #8a90a6;
+  --border: #262b38;
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Geist, Inter, system-ui, "PingFang SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 自绘滚动条（按本调色板，不用浏览器默认） */
+* { scrollbar-width: thin; scrollbar-color: var(--elevated) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--elevated);
+  border-radius: 8px;
+  border: 2px solid var(--bg);
+}
+*::-webkit-scrollbar-thumb:hover { background: #2a3040; }
+
+::selection { background: color-mix(in srgb, var(--primary) 35%, transparent); }
