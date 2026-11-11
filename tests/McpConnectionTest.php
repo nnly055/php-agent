@@ -93,6 +93,51 @@ final class McpConnectionTest extends TestCase
         self::assertSame('page2', $fake->sent[3]['params']['cursor']);
     }
 
+    public function testPaginationCapAbortsInfiniteCursor(): void
+    {
+        // 故障/恶意 server 永远回 nextCursor → 100 页上限中止，而不是挂死启动
+        $fake = new class implements Transport {
+            public int $requestCount = 0;
+
+            public function request(array $payload, float $timeout): array
+            {
+                $this->requestCount++;
+                if (($payload['method'] ?? '') === 'tools/list') {
+                    return ['jsonrpc' => '2.0', 'id' => $payload['id'], 'result' => [
+                        'tools' => [['name' => 'a', 'description' => '', 'inputSchema' => []]],
+                        'nextCursor' => 'x',
+                    ]];
+                }
+                return ['jsonrpc' => '2.0', 'id' => $payload['id'], 'result' => [
+                    'protocolVersion' => '2025-06-18', 'capabilities' => [],
+                    'serverInfo' => ['name' => 'fake', 'version' => '0'],
+                ]];
+            }
+
+            public function notify(array $payload): void
+            {
+            }
+
+            public function setProtocolVersion(string $version): void
+            {
+            }
+
+            public function close(): void
+            {
+            }
+        };
+        $conn = new McpConnection('fake', $fake, 5);
+
+        try {
+            $conn->initializeAndListTools();
+            self::fail('应当抛出异常');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('分页超过上限', $e->getMessage());
+        }
+        // initialize 1 次 + 拉满 100 页 tools/list，第 101 页检测超限中止
+        self::assertSame(101, $fake->requestCount);
+    }
+
     public function testReadOnlyHintParsed(): void
     {
         $fake = $this->makeFake([

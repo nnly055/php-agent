@@ -30,7 +30,7 @@ final class McpStatusCommand implements Command
 
     public function execute(array $args, CommandContext $ctx): string
     {
-        if ($this->specs === []) {
+        if ($this->specs === [] && $this->failures === []) {
             return '(未配置 MCP server：在工作区根目录放 .mcp.json，格式见 README)';
         }
         $lines = ['MCP server 状态:'];
@@ -51,6 +51,13 @@ final class McpStatusCommand implements Command
                 count($conn->tools()),
                 $toolNames !== '' ? ': ' . $toolNames : ''
             );
+        }
+        // 配置无效的条目进不了 specs（McpConfig 直接收进 errors），这里补齐展示，避免 /mcp 静默吞掉；
+        // 原因已由 McpPlugin 加「配置无效: 」前缀，不重复加
+        foreach ($this->failures as $name => $reason) {
+            if (!isset($this->specs[$name])) {
+                $lines[] = sprintf('  ✗ %-14s %s', $name, str_starts_with($reason, '配置无效') ? $reason : "配置无效: {$reason}");
+            }
         }
         return implode("\n", $lines);
     }

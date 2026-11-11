@@ -192,7 +192,7 @@ server 的工具挂进工具列表（`/tools` 可见，名称形如 `mcp__<serve
 composer test        # 或 vendor/bin/phpunit
 ```
 
-6 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、SSE 解析（分块/跨包/边界）。
+72 个测试覆盖：agent 循环（工具执行/消息结构/事件流）、最大轮数熔断、错误传播、SSE 解析（分块/跨包/边界）。
 
 ## SSE 接口（对接桌面前端）
 
@@ -209,7 +209,7 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 
 - [ ] 桌面壳：Tauri sidecar 加载 PHP 内核（或用 FrankenPHP 打包单二进制后端）
 - [ ] 流式 diff 渲染（write_file 展示修改前后对比）
-- [ ] MCP 客户端接入（logiscape/mcp-sdk-php）
+- [x] MCP 客户端接入（tools + stdio + Streamable HTTP，零依赖内置，见上方「MCP 工具（客户端）」）
 - [ ] 长会话上下文压缩（摘要）
 - [ ] TUI 升级（php-tui）
 

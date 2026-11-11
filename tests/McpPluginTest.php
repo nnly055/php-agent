@@ -51,7 +51,8 @@ final class McpPluginTest extends TestCase
 
     private function boot(): AgentKernel
     {
-        file_put_contents($this->root . '/.env', "AGENT_WORKSPACE={$this->workspace}\n");
+        // AGENT_MCP=on 显式覆盖 shell 里可能 export 的 AGENT_MCP=off（.env 优先于 shell 兜底）
+        file_put_contents($this->root . '/.env', "AGENT_WORKSPACE={$this->workspace}\nAGENT_MCP=on\n");
         $kernel = new AgentKernel(Config::load($this->root));
         PluginManager::load($kernel, $this->root);
         return $kernel;
@@ -129,5 +130,26 @@ final class McpPluginTest extends TestCase
         $sessionId = 't';
         $out = $kernel->command('mcp')->execute([], new CommandContext($kernel, $messages, $sessionId));
         self::assertStringContainsString('连接失败', $out);
+    }
+
+    public function testConfigInvalidServerShownInMcpCommand(): void
+    {
+        // command 与 url 同存 = 配置无效 → 进不了 specs，但 /mcp 也要列出名字与原因
+        file_put_contents($this->workspace . '/.mcp.json', json_encode(['mcpServers' => [
+            'bad' => ['command' => 'x', 'url' => 'https://a'],
+        ]]));
+        $kernel = $this->boot();
+
+        self::assertSame([], array_values(array_filter(
+            $kernel->toolRegistry()->names(),
+            static fn (string $n) => str_starts_with($n, 'mcp__')
+        )));
+        // CommandContext 的 messages/sessionId 是引用参数，不能传字面量，先落变量
+        $messages = [];
+        $sessionId = 't';
+        $out = $kernel->command('mcp')->execute([], new CommandContext($kernel, $messages, $sessionId));
+        self::assertStringContainsString('bad', $out);
+        self::assertStringContainsString('配置无效', $out);
+        self::assertStringContainsString('command 与 url 必须二选一', $out);
     }
 }

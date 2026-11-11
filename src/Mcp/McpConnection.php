@@ -28,7 +28,7 @@ final class McpConnection
     ) {
     }
 
-    /** @return McpToolInfo[] 失败抛 \RuntimeException（由 McpPlugin 转为该 server 的失败记录） */
+    /** @return McpToolInfo[] 失败（含分页超过 100 页上限）抛 \RuntimeException（由 McpPlugin 转为该 server 的失败记录） */
     public function initializeAndListTools(): array
     {
         $resp = $this->rpc('initialize', [
@@ -42,7 +42,12 @@ final class McpConnection
 
         $tools = [];
         $cursor = null;
+        $pages = 0;
         do {
+            // 故障/恶意 server 永远回 nextCursor 会挂死启动，设页数上限兜底
+            if (++$pages > 100) {
+                throw new \RuntimeException("MCP server '{$this->serverName}' 的 tools/list 分页超过上限（100 页），已中止");
+            }
             $params = $cursor !== null ? ['cursor' => $cursor] : [];
             $resp = $this->rpc('tools/list', $params);
             $result = is_array($resp['result'] ?? null) ? $resp['result'] : [];

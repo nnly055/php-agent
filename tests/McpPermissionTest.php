@@ -42,7 +42,8 @@ final class McpPermissionTest extends TestCase
         file_put_contents($this->workspace . '/.mcp.json', json_encode([
             'mcpServers' => ['fake' => ['command' => PHP_BINARY, 'args' => [$fixture], 'timeout' => 5]],
         ]));
-        file_put_contents($this->root . '/.env', "AGENT_WORKSPACE={$this->workspace}\n");
+        // AGENT_MCP=on 显式覆盖 shell 里可能 export 的 AGENT_MCP=off（.env 优先于 shell 兜底）
+        file_put_contents($this->root . '/.env', "AGENT_WORKSPACE={$this->workspace}\nAGENT_MCP=on\n");
         $kernel = new AgentKernel(Config::load($this->root));
         PluginManager::load($kernel, $this->root);
         return $kernel;
