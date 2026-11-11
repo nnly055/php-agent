@@ -1,5 +1,5 @@
 import { useRef, useCallback } from "react";
-import { agentStream, confirm as apiConfirm } from "../lib/api";
+import { agentStream, confirm as apiConfirm, listSessions } from "../lib/api";
 import { useAppStore } from "../store/useAppStore";
 
 export function useAgentStream() {
@@ -23,6 +23,13 @@ export function useAgentStream() {
     } finally {
       store.getState().endTurn();
       abortRef.current = null;
+      // 回合结束后刷新会话列表，让新会话进侧栏（后端不可达时忽略，连接横幅会提示）
+      try {
+        const { sessions } = await listSessions();
+        store.getState().setSessions(sessions);
+      } catch {
+        /* ignore */
+      }
     }
   }, []);
 

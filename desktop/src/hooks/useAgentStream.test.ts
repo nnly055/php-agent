@@ -7,6 +7,7 @@ import * as api from "../lib/api";
 vi.mock("../lib/api", () => ({
   confirm: vi.fn(),
   agentStream: vi.fn(),
+  listSessions: vi.fn(),
 }));
 
 describe("useAgentStream.answerConfirm", () => {
@@ -28,5 +29,17 @@ describe("useAgentStream.answerConfirm", () => {
     await act(async () => { await result.current.answerConfirm("n"); });
     expect(useAppStore.getState().pendingConfirm).toBeNull();
     expect(api.confirm).toHaveBeenCalledWith("cf2", "n");
+  });
+
+  it("refreshes the session list after a turn completes", async () => {
+    // mock agentStream as an empty async generator (turn ends immediately)
+    (api.agentStream as any).mockImplementationOnce(async function* () {});
+    (api.listSessions as any).mockResolvedValueOnce({ sessions: [{ id: "s-new", title: "演示", createdAt: 0, updatedAt: 0, messageCount: 2 }] });
+    useAppStore.getState().setActiveSession("s-new", []);
+    const { result } = renderHook(() => useAgentStream());
+    await act(async () => { await result.current.send("演示"); });
+    expect(api.listSessions).toHaveBeenCalled();
+    expect(useAppStore.getState().sessions.map(s => s.id)).toContain("s-new");
+    expect(useAppStore.getState().streaming).toBe(false);
   });
 });
