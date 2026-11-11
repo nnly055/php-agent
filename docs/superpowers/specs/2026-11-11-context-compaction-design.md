@@ -118,9 +118,12 @@ user 消息会连续两条 user。因此替换为**合成对**：
 ```bash
 AGENT_CONTEXT_TOKENS=128000     # 模型上下文窗口大小（按所用模型调整）
 AGENT_COMPACT_THRESHOLD=0.8     # 估算达到窗口 80% 时自动压缩
+AGENT_COMPACT_PROVIDER=         # 压缩摘要请求所用 provider id，空 = AGENT_PROVIDER；
+                                # --fake 离线演示设为 fake（插件感知不到入口的 --fake 切换）
 ```
 
-- `Config::contextTokens(): int`、`Config::compactThreshold(): float`（0–1，越界回落默认）
+- `Config::contextTokens(): int`、`Config::compactThreshold(): float`（0–1，越界回落默认）、
+  `Config::compactProvider(): string`（默认空）
 - README 增加 compact 小节（写法对标现有"权限模式与审计"段落）：
   机制说明、两个配置项、`/compact` 命令、停用方式
 - `docs/plugin-dev-guide.md` 将 compact 标注为 `before_llm_request` +
