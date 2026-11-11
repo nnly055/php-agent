@@ -41,17 +41,26 @@ impl Sidecar {
         let (tx, rx) = mpsc::channel::<u16>();
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
+            let mut sent = false;
             for line in reader.lines().map_while(Result::ok) {
-                if let Some(port) = parse_port_line(&line) {
-                    let _ = tx.send(port);
-                    break;
+                if !sent {
+                    if let Some(port) = parse_port_line(&line) {
+                        let _ = tx.send(port);
+                        sent = true;
+                    }
                 }
+                // 端口行之后继续 drain（丢弃），保持管道开放，php 后续 stdout 写入不会 EPIPE
             }
         });
 
-        let port = rx
-            .recv_timeout(Duration::from_secs(15))
-            .map_err(|_| "sidecar 未在 15s 内报告端口".to_string())?;
+        let port = match rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = kill_group(&mut child);
+                let _ = child.wait();
+                return Err("sidecar 未在 15s 内报告端口".to_string());
+            }
+        };
 
         // 探活：端口可连接即就绪（/status 由前端拉取）
         let addr = format!("127.0.0.1:{port}");
@@ -119,5 +128,32 @@ mod tests {
         assert_eq!(parse_port_line("PHP Agent 本地服务已启动"), None);
         assert_eq!(parse_port_line("AGENT_LISTENING port=abc"), None);
         assert_eq!(parse_port_line("AGENT_LISTENING port=99999"), None);
+    }
+
+    /// 集成测试：真实 spawn php sidecar，验证生命周期 + 无孤儿。
+    /// start 后 is_alive 为 true 证明 php 在 banner/日志写入后仍存活（stdout 管道保持开放）。
+    #[test]
+    fn sidecar_starts_and_stops() {
+        // 项目根 = src-tauri 上两级
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        // fake provider 离线启动（shell env 经 shellWins 生效）
+        std::env::set_var("AGENT_PROVIDER", "fake");
+        std::env::set_var("AGENT_SESSION_STORE", "memory");
+        let ws = std::env::temp_dir().join(format!("php-agent-sc-test-{}", std::process::id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut sc = Sidecar::start(&ws.to_string_lossy(), &root).expect("sidecar should start");
+        assert!(sc.port() > 0, "port should be assigned");
+        assert!(
+            sc.is_alive(),
+            "sidecar should be alive after start (pipe stays open)"
+        );
+        sc.stop();
+        assert!(!sc.is_alive(), "sidecar should be dead after stop");
+        std::fs::remove_dir_all(&ws).ok();
     }
 }
