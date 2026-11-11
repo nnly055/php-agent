@@ -10,8 +10,12 @@ export function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
 
   async function reconnect() {
     useAppStore.getState().setError(null);
-    await restartBackend();
-    onRetry();
+    try {
+      await restartBackend();
+      onRetry();
+    } catch (e: any) {
+      useAppStore.getState().setError(e?.message ?? "重连失败");
+    }
   }
 
   return (

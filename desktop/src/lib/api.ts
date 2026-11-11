@@ -22,7 +22,7 @@ export type Status = {
 };
 export type SessionMeta = { id: string; title: string; createdAt: number; updatedAt: number; messageCount: number };
 
-export const getStatus = () => json<Status>("/status");
+export const getStatus = (signal?: AbortSignal) => json<Status>("/status", { signal });
 export const listSessions = (limit = 50) => json<{ sessions: SessionMeta[] }>(`/sessions?limit=${limit}`);
 export const loadSession = (id: string) => json<{ id: string; messages: any[] }>(`/sessions/${encodeURIComponent(id)}`);
 export const deleteSession = (id: string) => json<{ ok: boolean }>(`/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });

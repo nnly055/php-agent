@@ -12,7 +12,9 @@ export function useBackendLiveness(enabled: boolean, intervalMs = 5000): void {
       if (inFlight) return;
       inFlight = true;
       try {
-        await getStatus();
+        // 4s 超时：sidecar 挂起（接受连接但不响应）时探活也会 reject，避免 inFlight 永久卡死轮询。
+        const signal = typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(4000) : undefined;
+        await getStatus(signal);
         if (alive) useAppStore.getState().setConnected(true);
       } catch {
         if (alive) useAppStore.getState().setConnected(false);
