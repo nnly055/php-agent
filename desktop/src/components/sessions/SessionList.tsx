@@ -1,6 +1,13 @@
 import type { SessionMeta } from "../../lib/api";
+import { SessionItem } from "./SessionItem";
 
-/** 占位组件：Task 18 实现完整会话列表（选择/删除/重命名）。 */
-export function SessionList(_props: { sessions: SessionMeta[] }) {
-  return <div />;
+export function SessionList({ sessions }: { sessions: SessionMeta[] }) {
+  if (sessions.length === 0) {
+    return <div className="px-4 py-6 text-center text-xs text-muted">暂无会话</div>;
+  }
+  return (
+    <div className="py-1">
+      {sessions.map((s) => <SessionItem key={s.id} meta={s} />)}
+    </div>
+  );
 }
