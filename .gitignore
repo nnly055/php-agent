@@ -1,6 +1,7 @@
-vendor/
+# 仅忽略项目根目录的 vendor（tests/fixtures/*/vendor 是测试夹具，必须入库）
+/vendor/
 .env
 .phpunit.result.cache
-demo/
+/demo/
 composer.lock.bak
 .DS_Store

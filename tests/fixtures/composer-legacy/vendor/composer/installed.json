@@ -1,0 +1,11 @@
+[
+    {
+        "name": "testvendor/php-agent-legacy",
+        "version": "1.0.0",
+        "extra": {
+            "php-agent": {
+                "plugins": ["PhpAgent\\TestVendor\\VendorPlugin"]
+            }
+        }
+    }
+]

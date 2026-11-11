@@ -1,0 +1,20 @@
+{
+    "packages": [
+        {
+            "name": "testvendor/php-agent-plugin",
+            "version": "1.0.0",
+            "extra": {
+                "php-agent": {
+                    "plugins": ["PhpAgent\\TestVendor\\VendorPlugin"]
+                }
+            }
+        },
+        {
+            "name": "other/without-php-agent-extra",
+            "version": "2.0.0",
+            "extra": {}
+        }
+    ],
+    "dev": false,
+    "dev-package-names": []
+}
