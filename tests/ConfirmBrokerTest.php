@@ -38,6 +38,47 @@ final class ConfirmBrokerTest extends TestCase
         self::assertNull($broker->pendingId());
     }
 
+    public function testSynchronousResolveInsideEmitterWorks(): void
+    {
+        // 钉住加固：先注册 pending 再 emit，emitter 内同步 resolve() 也能命中
+        $broker = new ConfirmBroker();
+        $broker->setEmitter(static function (StreamEvent $e) use ($broker): void {
+            $broker->resolve($e->data['id'], 'y');
+        });
+
+        $decision = null;
+        Loop::futureTick(static function () use ($broker, &$decision): void {
+            $decision = $broker->request('run_command', ['command' => 'ls']);
+        });
+        Loop::run();
+
+        self::assertSame('y', $decision);
+        self::assertNull($broker->pendingId());
+    }
+
+    public function testEmitterThrowCleansUpAndRethrows(): void
+    {
+        // 钉住无泄漏：emitter 同步抛错 → 清理 pending/timer/activeId 后原样重抛
+        $broker = new ConfirmBroker(0.05);
+        $broker->setEmitter(static function (StreamEvent $e): void {
+            throw new \RuntimeException('emit-boom');
+        });
+
+        $caught = null;
+        Loop::futureTick(static function () use ($broker, &$caught): void {
+            try {
+                $broker->request('run_command', ['command' => 'ls']);
+            } catch (\Throwable $e) {
+                $caught = $e;
+            }
+        });
+        Loop::run();
+
+        self::assertInstanceOf(\RuntimeException::class, $caught);
+        self::assertSame('emit-boom', $caught->getMessage());
+        self::assertNull($broker->pendingId());
+    }
+
     public function testResolveUnknownIdReturnsFalse(): void
     {
         $broker = new ConfirmBroker();

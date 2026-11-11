@@ -58,8 +58,14 @@ final class ConfirmBroker
             $this->settle($id, 'n');
         });
 
-        if ($this->emit !== null) {
-            ($this->emit)(StreamEvent::confirmRequest($id, $tool, $input, $preview));
+        // emitter 同步抛错时也要清理，否则 pending/timer/activeId 永久泄漏
+        try {
+            if ($this->emit !== null) {
+                ($this->emit)(StreamEvent::confirmRequest($id, $tool, $input, $preview));
+            }
+        } catch (\Throwable $e) {
+            $this->cleanup($id);
+            throw $e;
         }
 
         try {
