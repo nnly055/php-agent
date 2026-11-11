@@ -9,6 +9,23 @@
 
 ### 新增
 
+- **插件架构 Phase 3：composer 包发现 + 插件脚手架**
+  - `ComposerPluginDiscovery`：第三方包在 composer.json 声明
+    `"extra": { "php-agent": { "plugins": ["Vendor\\Plugin\\Class"] } }`，
+    composer install 后自动发现加载（读 vendor/composer/installed.json，
+    兼容 Composer 2.2+ 的 packages 包裹格式与更早的裸数组格式，坏 JSON 降级跳过）
+  - 三层加载顺序定型：内置 → composer 包 → 项目 plugins/（后注册覆盖同 id，
+    项目层可覆盖 composer 层、composer 层可覆盖内置）；AGENT_PLUGINS 的 off/白名单
+    对 composer 层同样生效
+  - `PluginScaffolder` + `php bin/agent --plugin:new <name>`：生成
+    plugins/<name>/ 骨架（plugin.php + 示例工具 + 示例命令），生成即自动启用；
+    拒绝重复目录与非法名
+  - 测试 29/29（+8）：三种 installed.json 形态（包裹/legacy 裸数组/坏 JSON）、
+    真实 vendor 无声明返回空、三层顺序与覆盖、off/白名单过滤 composer 层、
+    脚手架生成-加载-拒重-非法名
+  - 验证：--plugin:new demo → /plugins /tools /demo 均可见 ✓；重复生成 exit=1 ✓；
+    非法名 exit=1 ✓；清理后 29/29 无回归 ✓
+
 - **插件架构 Phase 2：钩子系统 + 权限确认 + 审计日志**
   - `AgentLoop` 接入 4 个钩子点（构造参数可选，默认零行为变化）：
     `before_llm_request`（引用携带 messages，可做上下文裁剪/注入；否决则中止本轮）、

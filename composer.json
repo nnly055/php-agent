@@ -18,7 +18,10 @@
         "psr-4": { "PhpAgent\\": "src/" }
     },
     "autoload-dev": {
-        "psr-4": { "PhpAgent\\Tests\\": "tests/" }
+        "psr-4": {
+            "PhpAgent\\Tests\\": "tests/",
+            "PhpAgent\\TestVendor\\": "tests/fixtures/composer-test/lib/"
+        }
     },
     "scripts": {
         "test": "phpunit",

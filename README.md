@@ -83,13 +83,37 @@ LLM provider、工具、**会话持久化**、斜杠命令、生命周期钩子�
 AGENT_SESSION_STORE=json|memory|sqlite3|redis
 ```
 
-设计文档见 [docs/plugin-design.md](docs/plugin-design.md)。写一个项目插件只需两步：
+设计文档见 [docs/plugin-design.md](docs/plugin-design.md)。写一个插件只需两步：
+
+### 方式一：脚手架生成（推荐）
+
+```bash
+php bin/agent --plugin:new my-tool
+# → plugins/my-tool/ 骨架（示例工具 my-tool_greet + 示例命令 /my-tool），生成即自动启用
+# → /tools、/help 立即可见，改掉示例实现就是你的插件
+```
+
+### 方式二：手工创建
 
 1. `plugins/<name>/src/MyPlugin.php` 实现 `PhpAgent\Kernel\Plugin`
 2. `plugins/<name>/plugin.php` 返回插件类名（[完整示例](plugins/example/)，把
    `plugin.php.disabled` 重命名为 `plugin.php` 即可启用）
 
-后注册者覆盖同 id——所以插件也能替换内置实现（如自定义 SessionStore）。
+### composer 包分发
+
+第三方包在自家 composer.json 里声明，`composer require` 后自动发现加载：
+
+```json
+{
+    "extra": {
+        "php-agent": { "plugins": ["Vendor\\PhpAgent\\MyPlugin"] }
+    }
+}
+```
+
+发现读取 `vendor/composer/installed.json`（不依赖 Composer 运行时）。三层加载顺序：
+内置 → composer 包 → 项目 `plugins/`，后注册者覆盖同 id——所以项目插件可以覆盖
+composer 包的实现。`AGENT_PLUGINS=off` 关闭 2/3 层；逗号列表按插件 name 白名单过滤。
 
 ## 内置工具
 

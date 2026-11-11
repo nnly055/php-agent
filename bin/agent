@@ -18,6 +18,7 @@ use PhpAgent\Hook\ConfirmHook;
 use PhpAgent\Hook\HookPipeline;
 use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\Kernel\PluginManager;
+use PhpAgent\Kernel\PluginScaffolder;
 use PhpAgent\Ui\ConsoleUi;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -25,6 +26,23 @@ require __DIR__ . '/../vendor/autoload.php';
 $root = dirname(__DIR__);
 $config = Config::load($root);
 $fake = in_array('--fake', $argv, true);
+
+// 插件脚手架：php bin/agent --plugin:new <name>
+$flagIdx = array_search('--plugin:new', $argv, true);
+if ($flagIdx !== false) {
+    $name = trim((string) ($argv[$flagIdx + 1] ?? ''));
+    if ($name === '') {
+        fwrite(STDERR, "用法: php bin/agent --plugin:new <name>（小写字母开头，含字母/数字/-/_）\n");
+        exit(1);
+    }
+    try {
+        echo PluginScaffolder::create($root, $name);
+        exit(0);
+    } catch (\Throwable $e) {
+        fwrite(STDERR, '✗ ' . $e->getMessage() . "\n");
+        exit(1);
+    }
+}
 
 // ── 装配：注册容器 + 插件发现 ──────────────────────────────
 $kernel = new AgentKernel($config);
