@@ -131,6 +131,12 @@ final class AgentServer
         $stream = new ThroughStream();
         $broker = $this->broker;
 
+        // SSE 客户端中途断开（react/http 在连接关闭时 close 响应体流）→ 立即按拒绝
+        // 清理 pending 确认，不必等 agent 回合结束的 finally（discardActive 幂等）。
+        $stream->on('close', function () use ($broker): void {
+            $broker?->discardActive();
+        });
+
         \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker): void {
             try {
                 $onEvent = function (StreamEvent $e) use ($stream): void {

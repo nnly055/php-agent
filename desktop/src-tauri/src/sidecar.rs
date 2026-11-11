@@ -74,6 +74,7 @@ impl Sidecar {
         }
         if !ready {
             let _ = kill_group(&mut child);
+            let _ = child.wait(); // reap，与超时路径一致，避免僵尸
             return Err("sidecar 端口无法连接".into());
         }
         Ok(Sidecar { child, port })

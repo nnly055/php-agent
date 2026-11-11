@@ -136,7 +136,7 @@ pub fn run() {
     let default_ws = project_root.to_string_lossy().to_string();
     let workspace = load_workspace(&default_ws);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
@@ -155,10 +155,27 @@ pub fn run() {
             restart_backend
         ])
         .setup(|app| {
+            // SIGINT/SIGTERM（含终端 Ctrl+C）→ 干净退出，杜绝孤儿 php sidecar。
+            // "termination" feature 同时覆盖 SIGTERM；handler 跑在独立线程，
+            // AppHandle::exit 经事件循环代理发消息，线程安全。exit(0) 会触发
+            // RunEvent::ExitRequested，在下方 run 回调里统一停 sidecar。
+            let signal_handle = app.handle().clone();
+            if let Err(e) = ctrlc::set_handler(move || signal_handle.exit(0)) {
+                eprintln!("无法安装 SIGINT/SIGTERM 处理器: {e}");
+            }
             let handle = app.handle().clone();
             start_sidecar(&handle);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app, event| {
+        // 窗口关闭与 exit(0)（信号）都路由到这里：整组 kill + wait，防孤儿 PHP。
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            if let Some(mut sc) = app.state::<AppState>().sidecar.lock().unwrap().take() {
+                sc.stop();
+            }
+        }
+    });
 }

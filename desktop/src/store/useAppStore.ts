@@ -23,6 +23,7 @@ type State = {
   activeSession: string;
   messages: ChatMessage[];
   streaming: boolean;
+  streamAbort: AbortController | null;
   pendingConfirm: PendingConfirm | null;
   error: string | null;
 
@@ -31,6 +32,7 @@ type State = {
   setConnected: (c: boolean) => void;
   setSessions: (s: SessionMeta[]) => void;
   setActiveSession: (id: string, messages?: ChatMessage[]) => void;
+  setStreamAbort: (c: AbortController | null) => void;
   setError: (e: string | null) => void;
   beginTurn: (text: string) => void;
   applyEvent: (ev: AgentEvent) => void;
@@ -54,6 +56,7 @@ export const useAppStore = create<State>((set, get) => ({
   activeSession: "",
   messages: [],
   streaming: false,
+  streamAbort: null,
   pendingConfirm: null,
   error: null,
 
@@ -61,7 +64,12 @@ export const useAppStore = create<State>((set, get) => ({
   setStatus: (s) => set({ status: s }),
   setConnected: (c) => set({ connected: c }),
   setSessions: (s) => set({ sessions: s }),
-  setActiveSession: (id, messages = []) => set({ activeSession: id, messages, pendingConfirm: null, error: null }),
+  setActiveSession: (id, messages = []) => {
+    // 切会话先中止在途流，防止旧会话的流继续 applyEvent 串进新会话的 transcript。
+    get().streamAbort?.abort();
+    set({ activeSession: id, messages, streaming: false, streamAbort: null, pendingConfirm: null, error: null });
+  },
+  setStreamAbort: (c) => set({ streamAbort: c }),
   setError: (e) => set({ error: e }),
 
   beginTurn: (text) =>
@@ -148,9 +156,11 @@ export const useAppStore = create<State>((set, get) => ({
   setPendingConfirm: (c) => set({ pendingConfirm: c }),
   endTurn: () => set({ streaming: false, pendingConfirm: null }),
 
-  reset: () =>
+  reset: () => {
+    get().streamAbort?.abort();
     set({
       backendUrl: "", status: null, connected: false, sessions: [], activeSession: "",
-      messages: [], streaming: false, pendingConfirm: null, error: null,
-    }),
+      messages: [], streaming: false, streamAbort: null, pendingConfirm: null, error: null,
+    });
+  },
 }));

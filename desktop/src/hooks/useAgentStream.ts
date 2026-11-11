@@ -1,9 +1,8 @@
-import { useRef, useCallback } from "react";
+import { useCallback } from "react";
 import { agentStream, confirm as apiConfirm, listSessions } from "../lib/api";
 import { useAppStore } from "../store/useAppStore";
 
 export function useAgentStream() {
-  const abortRef = useRef<AbortController | null>(null);
   const store = useAppStore;
 
   const send = useCallback(async (text: string) => {
@@ -13,7 +12,8 @@ export function useAgentStream() {
     if (!st.activeSession) store.getState().setActiveSession(sessionId);
     store.getState().beginTurn(text);
     const ac = new AbortController();
-    abortRef.current = ac;
+    // store.streamAbort 为唯一来源：切会话（setActiveSession）会 abort 它防跨会话串数据。
+    store.getState().setStreamAbort(ac);
     try {
       for await (const ev of agentStream(text, sessionId, ac.signal)) {
         store.getState().applyEvent(ev);
@@ -22,7 +22,8 @@ export function useAgentStream() {
       if (e?.name !== "AbortError") store.getState().setError(e?.message ?? String(e));
     } finally {
       store.getState().endTurn();
-      abortRef.current = null;
+      // 仅当当前控制器仍是本回合的才清空，避免切会话后新回合的控制器被旧 finally 误清。
+      if (store.getState().streamAbort === ac) store.getState().setStreamAbort(null);
       // 回合结束后刷新会话列表，让新会话进侧栏（后端不可达时忽略，连接横幅会提示）
       try {
         const { sessions } = await listSessions();
@@ -45,7 +46,7 @@ export function useAgentStream() {
     }
   }, []);
 
-  const abort = useCallback(() => abortRef.current?.abort(), []);
+  const abort = useCallback(() => store.getState().streamAbort?.abort(), []);
 
   return { send, answerConfirm, abort };
 }

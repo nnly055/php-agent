@@ -221,7 +221,7 @@ server 的工具挂进工具列表（`/tools` 可见，名称形如 `mcp__<serve
 
 ```bash
 composer test                          # 后端：vendor/bin/phpunit（123 个测试）
-cd desktop && npm test                 # 前端：vitest（29 个测试）
+cd desktop && npm test                 # 前端：vitest（31 个测试）
 cd desktop/src-tauri && cargo test     # Rust 壳（2 个测试）
 ```
 
@@ -231,7 +231,7 @@ SSE 解析（分块/跨包/边界）、钩子管线与权限确认、插件发�
 diff 插件与 /compact 命令、MCP 客户端（stdio/HTTP 传输、连接、权限、插件与工具适配）、
 本地服务（路由/CORS/确认代理/SSE 集成）。
 
-前端 29 个测试覆盖（vitest + Testing Library）：SSE 帧解析、diff 解析与渲染、
+前端 31 个测试覆盖（vitest + Testing Library）：SSE 帧解析、diff 解析与渲染、
 zustand store、流式/探活 hooks、输入框、授权弹窗、会话条目、连接横幅。
 
 Rust 2 个测试覆盖：端口行解析、sidecar 真实启动/停止生命周期（含无孤儿验证）。

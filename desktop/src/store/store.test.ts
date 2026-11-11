@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useAppStore } from "./useAppStore";
 
 describe("app store", () => {
@@ -80,5 +80,25 @@ describe("app store", () => {
     expect(msgsAfter).not.toBe(msgsBefore);
     expect(msgsAfter[msgsAfter.length - 1]).not.toBe(assistantBefore);
     expect(msgsAfter[0]).toBe(userBefore);
+  });
+
+  it("switching active session aborts the in-flight stream (no cross-session bleed)", () => {
+    // 模拟一个正在进行的回合：streaming=true 且挂着一个在途 AbortController。
+    useAppStore.getState().beginTurn("hi");
+    const ac = new AbortController();
+    const abortSpy = vi.spyOn(ac, "abort");
+    useAppStore.getState().setStreamAbort(ac);
+    expect(useAppStore.getState().streaming).toBe(true);
+
+    // 切到另一个会话：必须中止在途流并复位流式状态。
+    useAppStore.getState().setActiveSession("other", []);
+
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(ac.signal.aborted).toBe(true);
+    const s = useAppStore.getState();
+    expect(s.streaming).toBe(false);
+    expect(s.streamAbort).toBeNull();
+    expect(s.activeSession).toBe("other");
+    expect(s.messages).toEqual([]);
   });
 });
