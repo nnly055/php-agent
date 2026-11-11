@@ -124,6 +124,35 @@ final class ConsoleUi
         }
     }
 
+    /**
+     * 工具执行授权提示（ConfirmHook 的 CLI 交互面）。
+     *
+     * @return string 'y' | 'n' | 'a'（本次会话总是允许）
+     */
+    public function promptTool(string $tool, array $input): string
+    {
+        $this->resetTextState();
+        $json = json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        echo "\n  " . self::YELLOW . '⚙ 需要授权: ' . $tool . self::RESET
+            . self::DIM . ' ' . $this->truncate((string) $json, 140) . self::RESET;
+        fflush(STDOUT);
+
+        if (!@stream_isatty(STDIN)) {
+            echo self::DIM . "\n  （非交互终端，自动拒绝；AGENT_PERMISSIONS=off 可跳过）" . self::RESET . "\n";
+            fflush(STDOUT);
+            return 'n';
+        }
+
+        echo "\n  " . self::CYAN . '允许执行? [Y/n/a=本次会话总是允许] ' . self::RESET;
+        fflush(STDOUT);
+        $line = strtolower(trim((string) fgets(STDIN)));
+        return match (true) {
+            $line === '' || $line === 'y' || $line === 'yes' => 'y',
+            $line === 'a' || $line === 'always' => 'a',
+            default => 'n',
+        };
+    }
+
     public function error(string $message): void
     {
         $this->resetTextState();

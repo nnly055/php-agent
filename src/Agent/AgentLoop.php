@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PhpAgent\Agent;
 
+use PhpAgent\Hook\HookPipeline;
+use PhpAgent\Hook\HookVetoException;
 use PhpAgent\LLM\LLMClient;
 use PhpAgent\LLM\LLMException;
 use PhpAgent\LLM\StreamEvent;
@@ -33,6 +35,15 @@ final class AgentLoop
         $messages[] = ['role' => 'user', 'content' => [['type' => 'text', 'text' => $userInput]]];
 
         for ($iteration = 1; $iteration <= $this->maxIterations; $iteration++) {
+            // 钩子点：before_llm_request —— payload 以引用携带 messages，可做上下文裁剪/注入
+            $hookPayload = ['messages' => &$messages, 'iteration' => $iteration];
+            try {
+                HookPipeline::fire($this->hooks, 'before_llm_request', $hookPayload);
+            } catch (HookVetoException $e) {
+                throw new LLMException('本次 LLM 请求被钩子否决: ' . $e->getMessage());
+            }
+            unset($hookPayload);
+
             [$text, $assistantBlocks] = $this->oneRound($messages);
 
             $messages[] = ['role' => 'assistant', 'content' => $assistantBlocks];
@@ -43,12 +54,34 @@ final class AgentLoop
             ));
 
             if ($toolUses === []) {
+                HookPipeline::fire($this->hooks, 'after_turn', [
+                    'messages' => $messages,
+                    'text' => $text,
+                    'iterations' => $iteration,
+                ]);
                 return $text !== '' ? $text : '(空回复)';
             }
 
             $results = [];
             foreach ($toolUses as $use) {
-                $result = $this->registry->execute($use['name'], $use['input'] ?? []);
+                $input = is_array($use['input'] ?? null) ? $use['input'] : [];
+
+                // 钩子点：before_tool_call —— 抛 HookVetoException 可否决（权限确认/危险拦截）
+                try {
+                    HookPipeline::fire($this->hooks, 'before_tool_call', ['tool' => $use['name'], 'input' => $input]);
+                    $result = $this->registry->execute($use['name'], $input);
+                } catch (HookVetoException $e) {
+                    $result = 'DENIED: 工具 ' . $use['name'] . ' 被用户拒绝'
+                        . ($e->getMessage() !== '' ? '（' . $e->getMessage() . '）' : '');
+                }
+
+                // 钩子点：after_tool_result —— 审计、脱敏
+                HookPipeline::fire($this->hooks, 'after_tool_result', [
+                    'tool' => $use['name'],
+                    'input' => $input,
+                    'result' => $result,
+                ]);
+
                 $emit(StreamEvent::toolResult($use['name'], $result));
                 $results[] = [
                     'type' => 'tool_result',
@@ -171,6 +204,7 @@ final class AgentLoop
         private readonly ToolRegistry $registry,
         private readonly string $system,
         private readonly int $maxIterations = 25,
+        private readonly iterable $hooks = [],
     ) {
     }
 }

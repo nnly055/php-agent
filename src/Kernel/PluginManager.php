@@ -6,6 +6,7 @@ namespace PhpAgent\Kernel;
 
 use PhpAgent\Config;
 use PhpAgent\Plugins\AnthropicPlugin;
+use PhpAgent\Plugins\AuditPlugin;
 use PhpAgent\Plugins\CommandsPlugin;
 use PhpAgent\Plugins\CoreToolsPlugin;
 use PhpAgent\Plugins\FakePlugin;
@@ -56,6 +57,7 @@ final class PluginManager
             OpenAICompatPlugin::class,
             FakePlugin::class,
             SessionPlugin::class,
+            AuditPlugin::class,
             CommandsPlugin::class,
         ];
     }

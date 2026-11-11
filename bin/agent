@@ -14,6 +14,8 @@ use PhpAgent\Agent\AgentLoop;
 use PhpAgent\Agent\DefaultSystemPrompt;
 use PhpAgent\Command\CommandContext;
 use PhpAgent\Config;
+use PhpAgent\Hook\ConfirmHook;
+use PhpAgent\Hook\HookPipeline;
 use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\Kernel\PluginManager;
 use PhpAgent\Ui\ConsoleUi;
@@ -28,15 +30,25 @@ $fake = in_array('--fake', $argv, true);
 $kernel = new AgentKernel($config);
 PluginManager::load($kernel, $root);
 
+$ui = new ConsoleUi($config);
+
+// 工具执行授权：ask 模式下写文件/执行命令前 Y/n 确认（fake 演示不启用）。
+// 必须在 AgentLoop 构造之前注册（loop 构造时快照钩子列表）。
+if (!$fake && $config->permissions() === 'ask') {
+    $kernel->addHook(new ConfirmHook(
+        static fn (string $tool, array $input): string => $ui->promptTool($tool, $input)
+    ));
+}
+
 $client = $kernel->provider($fake ? 'fake' : $config->provider());
 $loop = new AgentLoop(
     $client,
     $kernel->toolRegistry(),
     DefaultSystemPrompt::text($config->workspace()),
-    $config->maxIterations()
+    $config->maxIterations(),
+    $kernel->hooks() // 钩子快照：内置插件（审计）+ ConfirmHook
 );
 
-$ui = new ConsoleUi($config);
 $ui->banner($fake);
 
 // ── 会话状态 ────────────────────────────────────────────────
@@ -92,6 +104,7 @@ while (true) {
     try {
         $loop->run($messages, $line, $ui->handleEvent(...));
         $store->save($sessionId, $messages);
+        HookPipeline::fire($kernel->hooks(), 'session_saved', ['sessionId' => $sessionId]);
     } catch (\Throwable $e) {
         $messages = $snapshot; // 回滚本轮，避免历史里残留半条消息
         $ui->error($e->getMessage());

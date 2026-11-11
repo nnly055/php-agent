@@ -154,4 +154,28 @@ final class Config
     {
         return strtolower(trim($this->env['AGENT_PLUGINS'] ?? ''));
     }
+
+    // ── 权限与审计 ──────────────────────────────────────────
+
+    /**
+     * 工具执行权限：ask（默认）= 写文件/执行命令前 CLI 交互确认，只读工具自动放行；
+     * off = 全部放行。server 端不做交互确认（桌面壳自行实现前端授权）。
+     */
+    public function permissions(): string
+    {
+        $p = strtolower($this->env['AGENT_PERMISSIONS'] ?? 'ask');
+        return in_array($p, ['off', 'ask'], true) ? $p : 'ask';
+    }
+
+    /** 审计日志开关（默认 on，写入 <存储目录>/audit.jsonl） */
+    public function audit(): bool
+    {
+        return strtolower($this->env['AGENT_AUDIT'] ?? 'on') !== 'off';
+    }
+
+    /** 审计文件目录，null = 会话存储目录 */
+    public function auditDir(): ?string
+    {
+        return $this->env['AGENT_AUDIT_DIR'] ?? null;
+    }
 }

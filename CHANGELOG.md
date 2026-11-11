@@ -9,6 +9,22 @@
 
 ### 新增
 
+- **插件架构 Phase 2：钩子系统 + 权限确认 + 审计日志**
+  - `AgentLoop` 接入 4 个钩子点（构造参数可选，默认零行为变化）：
+    `before_llm_request`（引用携带 messages，可做上下文裁剪/注入；否决则中止本轮）、
+    `before_tool_call`（抛 `HookVetoException` 否决，结果以 `DENIED:` 回传模型）、
+    `after_tool_result`（审计/脱敏）、`after_turn`（统计/telemetry）；
+    `session_saved` 由 CLI/server 保存会话后触发
+  - 内置 `ConfirmHook`：工具执行授权（只读工具自动放行，Y/n/a=本次会话总是允许，
+    非交互终端自动拒绝），CLI 在 `AGENT_PERMISSIONS=ask`（默认）时装配
+  - 内置 `AuditLogHook` + `AuditPlugin`：工具调用/结果追加 JSONL
+    （`AGENT_AUDIT` 默认 on，`~/.php-agent/sessions/audit.jsonl`）
+  - `HookPipeline` 统一事件过滤与顺序执行
+  - 测试 21/21（+7）：否决传播、审计 JSONL、上下文注入引用传播、
+    after_turn payload、ConfirmHook 状态机、before_llm_request 否决
+  - 验证：ask 模式只读工具不打扰 ✓；非交互终端危险工具自动拒绝 ✓；
+    off 模式直通 ✓；审计 JSONL 配对记录 ✓；DeepSeek 真实回归 ✓
+
 - **插件架构 Phase 1**（设计文档 [docs/plugin-design.md](docs/plugin-design.md)）
   - Kernel 层：`Plugin` 接口 + `AgentKernel` 注册容器 + `PluginManager` 发现加载
     （内置 → 项目 `plugins/` 目录，`AGENT_PLUGINS` 可 off/白名单过滤，composer 包发现留待 Phase 3）

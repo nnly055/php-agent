@@ -39,7 +39,7 @@ $loop = new AgentLoop(
 );
 
 $storeClass = get_class($kernel->sessionStore());
-$server = new AgentServer($loop, $kernel->sessionStore(), $root . '/public');
+$server = new AgentServer($loop, $kernel->sessionStore(), $kernel->hooks(), $root . '/public');
 
 $http = new HttpServer(Loop::get(), $server->handle(...));
 $port = $config->serverPort();

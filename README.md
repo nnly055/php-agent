@@ -61,6 +61,18 @@ php bin/server
 
 会话在每轮任务结束后自动保存；CLI 重进 `/resume` 续聊，server 重启不丢会话。
 
+### 权限模式与审计
+
+```bash
+AGENT_PERMISSIONS=ask   # 默认：write_file/run_command 执行前 CLI 确认 [Y/n/a]，
+                        # a=本次会话总是允许；只读工具（read_file/list_dir/grep）自动放行；
+                        # 非交互终端自动拒绝
+AGENT_PERMISSIONS=off   # 全部放行
+AGENT_AUDIT=on          # 默认：每次工具调用/结果追加写入 ~/.php-agent/sessions/audit.jsonl
+```
+
+server 端不做交互确认（桌面壳接入后由前端实现授权 UI），审计对 CLI/server 同时生效。
+
 ## 插件系统
 
 核心只提供「接口 + 注册容器 + 发现机制」，五个扩展点全部可插拔：

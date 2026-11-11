@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PhpAgent\Server;
 
 use PhpAgent\Agent\AgentLoop;
+use PhpAgent\Hook\HookPipeline;
 use PhpAgent\LLM\StreamEvent;
 use PhpAgent\Session\SessionStore;
 use React\Http\Message\Response;
@@ -26,6 +27,7 @@ final class AgentServer
     public function __construct(
         private readonly AgentLoop $loop,
         private readonly SessionStore $store,
+        private readonly array $hooks,
         private readonly string $publicDir,
     ) {
     }
@@ -74,6 +76,7 @@ final class AgentServer
                 };
                 $final = $this->loop->run($messages, $message, $onEvent);
                 $this->store->save($sid, $messages); // 仅成功时保存，失败保持原状态
+                HookPipeline::fire($this->hooks, 'session_saved', ['sessionId' => $sid]);
                 $stream->write($this->sseFrame(StreamEvent::finalAnswer($final)));
                 $stream->end();
             } catch (\Throwable $e) {
