@@ -105,8 +105,16 @@ final class ConsoleUi
                 $this->resetTextState();
                 $result = (string) $ev->data['result'];
                 $isError = str_starts_with($result, 'ERROR:');
-                $color = $isError ? self::RED : self::GREEN;
-                echo "\n  " . self::DIM . '↳ ' . $color . $this->truncate(str_replace("\n", ' ⏎ ', $result), 200) . self::RESET;
+                // 携带 diff 块的结果（如 diff 插件）：多行原样展示，自身已带 ANSI 颜色
+                // diff 行可能带 ANSI 前缀（\n\033[32m+…），需容忍颜色码再检测
+                $isDiff = preg_match('/\n(?:\x1b\[[0-9;]*m)?[+\-]/', $result) === 1;
+                if ($isDiff) {
+                    $body = mb_strlen($result) > 3000 ? mb_substr($result, 0, 3000) . '…' : $result;
+                    echo "\n  " . self::DIM . '↳' . self::RESET . ' ' . $body;
+                } else {
+                    $color = $isError ? self::RED : self::GREEN;
+                    echo "\n  " . self::DIM . '↳ ' . $color . $this->truncate(str_replace("\n", ' ⏎ ', $result), 200) . self::RESET;
+                }
                 fflush(STDOUT);
                 break;
 

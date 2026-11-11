@@ -20,6 +20,10 @@
   .tool b { color:var(--yellow); font-weight:600; }
   .tool .args { color:var(--text); }
   .tool .result { border-top:1px dashed var(--border); margin-top:6px; padding-top:6px; color:var(--green); }
+  .tool .result.diff { white-space:pre-wrap; color:var(--text); }
+  .tool .result.diff .dl-add { color:var(--green); }
+  .tool .result.diff .dl-del { color:var(--red); }
+  .tool .result.diff .dl-meta { color:var(--dim); }
   .tool.failed { border-left-color:var(--red); } .tool.failed .result { color:var(--red); }
   footer { border-top:1px solid var(--border); padding:12px 20px; display:flex; gap:10px; }
   #input { flex:1; background:var(--panel); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:10px 14px; font:inherit; outline:none; resize:none; height:44px; }
@@ -126,8 +130,22 @@ async function send_() {
               if (!t) t = addTool(d.toolName);
               const resEl = t.querySelector('.result');
               resEl.hidden = false;
-              resEl.textContent = d.result.slice(0, 400);
-              t.classList.toggle('failed', String(d.result).startsWith('ERROR:'));
+              const raw = String(d.result);
+              const plain = raw.replace(/\x1b\[[0-9;]*m/g, '');
+              if (plain.includes('\n+') || plain.includes('\n-')) {
+                // diff 块：剥 ANSI 码，按行前缀上色
+                resEl.classList.add('diff');
+                resEl.innerHTML = plain.split('\n').map(l => {
+                  const esc = escapeHtml(l);
+                  if (/^(\+\+\+|---|@@)/.test(l)) return `<span class="dl-meta">${esc}</span>`;
+                  if (l.startsWith('+')) return `<span class="dl-add">${esc}</span>`;
+                  if (l.startsWith('-')) return `<span class="dl-del">${esc}</span>`;
+                  return esc;
+                }).join('\n');
+              } else {
+                resEl.textContent = raw.slice(0, 400);
+              }
+              t.classList.toggle('failed', raw.startsWith('ERROR:'));
               finishTool();
               scroll(); break;
             }

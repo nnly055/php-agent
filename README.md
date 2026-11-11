@@ -74,7 +74,13 @@ AGENT_PERMISSIONS=off   # 全部放行
 AGENT_AUDIT=on          # 默认：每次工具调用/结果追加写入 ~/.php-agent/sessions/audit.jsonl
 ```
 
-server 端不做交互确认（桌面壳接入后由前端实现授权 UI），审计对 CLI/server 同时生效。
+`AGENT_PERMISSIONS=ask` 时，`write_file` 授权确认前会先展示**变更预览**（红绿 diff），
+即「先看改了什么、再决定 Y/n/a」。该能力由内置的 diff 插件提供
+（[plugins/diff/](plugins/diff/)，同时是「工具装饰器 + 生命周期钩子」双扩展点的参考实现），
+重命名 `plugin.php → plugin.php.disabled` 可停用。
+
+server 端不做交互确认（桌面壳接入后由前端实现授权 UI，diff 由前端按行上色渲染），
+审计对 CLI/server 同时生效。
 
 ## 插件系统
 
@@ -126,7 +132,7 @@ composer 包的实现。`AGENT_PLUGINS=off` 关闭 2/3 层；逗号列表按插�
 | 工具 | 功能 | 安全约束 |
 |---|---|---|
 | `read_file` | 读文件（带行号，支持 offset/limit） | 限制在工作目录内 |
-| `write_file` | 写文件（自动创建父目录） | 限制在工作目录内 |
+| `write_file` | 写文件（自动创建父目录），**覆盖已有文件时返回红绿 diff** | 限制在工作目录内 |
 | `list_dir` | 浏览目录 | 限制在工作目录内 |
 | `run_command` | 执行 shell 命令 | 工作目录内运行；stdin=EOF；默认 60s 超时；输出截断 32KB；非零退出标记 ERROR |
 | `grep` | 递归正则搜索（PCRE） | 跳过 .git/node_modules；上限 200 条 |
@@ -192,4 +198,5 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 - [ ] TUI 升级（php-tui）
 
 已实现：会话持久化插件化（json / sqlite3 / redis / memory 一行切换）、
-钩子系统（工具授权确认、审计日志）、composer 包插件发现、插件脚手架。
+钩子系统（工具授权确认、审计日志）、composer 包插件发现、插件脚手架、
+**write_file 变更可视化**（授权前 diff 预览 + 结果 diff，diff 插件）。

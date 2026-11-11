@@ -9,6 +9,19 @@
 
 ### 新增
 
+- **write_file 变更可视化（diff 插件）**
+  - plugins/diff/：`DiffWriteFileTool`（组合装饰器，同名覆盖内置 write_file，
+    覆盖已有文件时返回 ANSI 红绿 unified diff）+ `DiffPreviewHook`
+    （`before_tool_call` 时在授权确认前打印变更预览——「先看 diff、再决定 Y/n/a」，
+    加载顺序保证项目插件钩子先于 bin/agent 手动装配的 ConfirmHook 执行）
+  - UI：CLI tool_result 检测 diff 块改多行展示（容忍 ANSI 前缀）；
+    Web 前端剥 ANSI 码后按 +/-/@@ 行前缀上色；StreamEvent 协议零改动
+  - diff 内容随 tool_result 进入会话历史（模型可见自己的改动确认）与审计日志
+  - 同时作为「工具装饰器 + 生命周期钩子」双扩展点的官方参考实现
+  - 测试 38/38（+9）：覆盖注册、新文件/覆盖/无变化 diff、预览钩子、
+    长截断、AgentLoop 集成；E2E：DeepSeek 修改真实文件红绿正确、
+    CLI 与 SSE 双端验证
+
 - **第三方持久化插件实证 + 开发者指南**
   - 以「第三方开发者」身份完整走通接入流程：新增 MySQL 会话存储插件
     （plugins/mysql-store/，PDO MySQL、自动建库建表、自带 AGENT_MYSQL_* 配置、
