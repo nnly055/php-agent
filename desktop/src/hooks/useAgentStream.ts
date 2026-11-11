@@ -33,6 +33,7 @@ export function useAgentStream() {
     try {
       await apiConfirm(c.id, decision);
     } catch (e: any) {
+      store.getState().setPendingConfirm(c); // 恢复弹窗，允许重试（后端仍在等待）
       store.getState().setError(e?.message ?? String(e));
     }
   }, []);
