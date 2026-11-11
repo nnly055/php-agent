@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { SessionMeta } from "../../lib/api";
-import { useAppStore, type ChatMessage, type ToolCard } from "../../store/useAppStore";
+import { type ChatMessage, type ToolCard } from "../../store/useAppStore";
+import { useProjectStore } from "../../store/useProjectStore";
 import { loadSession, deleteSession, listSessions } from "../../lib/api";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import {
@@ -36,25 +37,27 @@ function toChatMessages(messages: any[]): ChatMessage[] {
 }
 
 export function SessionItem({ meta }: { meta: SessionMeta }) {
-  const active = useAppStore((s) => s.activeSession) === meta.id;
+  const store = useProjectStore();
+  const active = store((s) => s.activeSession) === meta.id;
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function open() {
     try {
-      const { messages } = await loadSession(meta.id);
-      useAppStore.getState().setActiveSession(meta.id, toChatMessages(messages));
+      const { messages } = await loadSession(store.getState().backendUrl, meta.id);
+      store.getState().setActiveSession(meta.id, toChatMessages(messages));
     } catch (e: any) {
-      useAppStore.getState().setError(e?.message ?? "加载会话失败");
+      store.getState().setError(e?.message ?? "加载会话失败");
     }
   }
   async function remove() {
+    const baseUrl = store.getState().backendUrl;
     try {
-      await deleteSession(meta.id);
-      const { sessions } = await listSessions();
-      useAppStore.getState().setSessions(sessions);
-      if (active) useAppStore.getState().setActiveSession("", []);
+      await deleteSession(baseUrl, meta.id);
+      const { sessions } = await listSessions(baseUrl);
+      store.getState().setSessions(sessions);
+      if (active) store.getState().setActiveSession("", []);
     } catch (e: any) {
-      useAppStore.getState().setError(e?.message ?? "删除会话失败");
+      store.getState().setError(e?.message ?? "删除会话失败");
     }
   }
 

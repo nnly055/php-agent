@@ -1,9 +1,10 @@
 import { useCallback } from "react";
 import { agentStream, confirm as apiConfirm, listSessions } from "../lib/api";
-import { useAppStore } from "../store/useAppStore";
+import { useProjectStore } from "../store/useProjectStore";
 
+/** 当前项目（Provider 内）的回合发送/授权应答/中止。 */
 export function useAgentStream() {
-  const store = useAppStore;
+  const store = useProjectStore();
 
   const send = useCallback(async (text: string) => {
     const st = store.getState();
@@ -15,7 +16,7 @@ export function useAgentStream() {
     // store.streamAbort 为唯一来源：切会话（setActiveSession）会 abort 它防跨会话串数据。
     store.getState().setStreamAbort(ac);
     try {
-      for await (const ev of agentStream(text, sessionId, ac.signal)) {
+      for await (const ev of agentStream(st.backendUrl, text, sessionId, ac.signal)) {
         store.getState().applyEvent(ev);
       }
     } catch (e: any) {
@@ -26,27 +27,27 @@ export function useAgentStream() {
       if (store.getState().streamAbort === ac) store.getState().setStreamAbort(null);
       // 回合结束后刷新会话列表，让新会话进侧栏（后端不可达时忽略，连接横幅会提示）
       try {
-        const { sessions } = await listSessions();
+        const { sessions } = await listSessions(store.getState().backendUrl);
         store.getState().setSessions(sessions);
       } catch {
         /* ignore */
       }
     }
-  }, []);
+  }, [store]);
 
   const answerConfirm = useCallback(async (decision: "y" | "n" | "a") => {
     const c = store.getState().pendingConfirm;
     if (!c) return;
     store.getState().setPendingConfirm(null);
     try {
-      await apiConfirm(c.id, decision);
+      await apiConfirm(store.getState().backendUrl, c.id, decision);
     } catch (e: any) {
       store.getState().setPendingConfirm(c); // 恢复弹窗，允许重试（后端仍在等待）
       store.getState().setError(e?.message ?? String(e));
     }
-  }, []);
+  }, [store]);
 
-  const abort = useCallback(() => store.getState().streamAbort?.abort(), []);
+  const abort = useCallback(() => store.getState().streamAbort?.abort(), [store]);
 
   return { send, answerConfirm, abort };
 }

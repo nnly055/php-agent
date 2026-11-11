@@ -7,6 +7,22 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **桌面壳多项目管理（每项目一进程）**
+  - Rust 壳从单 sidecar 改为会话表：每个项目拉起独立 PHP 进程
+    （`AGENT_WORKSPACE` = 项目目录、`AGENT_SESSION_DIR` = `~/.php-agent/projects/<slug>/sessions`
+    按 crc32 slug 隔离、`AGENT_SERVER_PORT=0` 动态端口），项目间真并行互不冻结，
+    同项目内串行避免编辑冲突；同一项目重复打开幂等复用存活进程
+  - 生命周期：懒启动（打开标签才拉起）+ 启动恢复最近会话 + 退出整组清理；
+    项目列表/最近会话持久化（desktop.json，兼容 v0.3.0 旧格式迁移）
+  - 前端：项目标签条（打开/关闭/恢复折叠列表）+ 欢迎屏项目卡片；
+    store 工厂化（每项目一实例 + Context 注入，无 Provider 回退单例保持旧测试兼容）；
+    api 层 baseUrl 参数化（多连接不串流）
+  - 测试：Rust 5（slug/crc32 纯函数 + 双 sidecar 并发集成）+ 前端 36（+3：store 隔离 /
+    Provider 注入 / 断连重连）
+  - PHP 内核零改动——多项目隔离完全由壳层 env 注入实现
+
 ## [0.3.0] - 2026-11-12
 
 > Tauri 2 桌面壳 MVP：React/shadcn 前端 + Rust 壳 + PHP sidecar，复用全部内核能力。

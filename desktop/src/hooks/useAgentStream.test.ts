@@ -28,7 +28,8 @@ describe("useAgentStream.answerConfirm", () => {
     const { result } = renderHook(() => useAgentStream());
     await act(async () => { await result.current.answerConfirm("n"); });
     expect(useAppStore.getState().pendingConfirm).toBeNull();
-    expect(api.confirm).toHaveBeenCalledWith("cf2", "n");
+    // baseUrl 参数化后：第一个参数为 backendUrl（默认单例为 ""）
+    expect(api.confirm).toHaveBeenCalledWith(expect.any(String), "cf2", "n");
   });
 
   it("refreshes the session list after a turn completes", async () => {

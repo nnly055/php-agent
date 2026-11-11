@@ -1,10 +1,11 @@
 import { useState, useRef, type KeyboardEvent } from "react";
-import { useAppStore } from "../../store/useAppStore";
+import { useProjectStore } from "../../store/useProjectStore";
 import { Button } from "../ui/button";
 import { SendHorizonal, Square } from "lucide-react";
 
 export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onAbort: () => void }) {
-  const streaming = useAppStore((s) => s.streaming);
+  const store = useProjectStore();
+  const streaming = store((s) => s.streaming);
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 

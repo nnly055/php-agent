@@ -17,9 +17,52 @@ pub struct Sidecar {
     port: u16,
 }
 
+/// 项目路径 → 稳定的目录 slug（会话存储按项目隔离：~/.php-agent/projects/<slug>/sessions）。
+/// 清洗末段目录名 + path 的 crc32（手写实现，跨版本稳定，不依赖 DefaultHasher）。
+pub fn project_slug(path: &str) -> String {
+    let last = Path::new(path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string());
+    let mut cleaned = String::new();
+    let mut prev_dash = false;
+    for c in last.chars() {
+        if c.is_ascii_alphanumeric() {
+            cleaned.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !cleaned.is_empty() {
+            cleaned.push('-');
+            prev_dash = true;
+        }
+    }
+    while cleaned.ends_with('-') {
+        cleaned.pop();
+    }
+    let base = if cleaned.is_empty() { "project".to_string() } else { cleaned };
+    format!("{}-{:08x}", base, crc32(path.as_bytes()))
+}
+
+/// 纯 crc32（IEEE 802.3 多项式），不引入依赖。
+pub fn crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
 impl Sidecar {
-    /// spawn `php bin/server`，注入 env，阻塞等待端口行 + 探活
-    pub fn start(workspace: &str, project_root: &Path) -> Result<Sidecar, String> {
+    /// spawn `php bin/server`，注入 env，阻塞等待端口行 + 探活。
+    /// `session_dir` 为空则不注入 AGENT_SESSION_DIR（PHP 侧用默认 ~/.php-agent/sessions）。
+    pub fn start_with_env(
+        workspace: &str,
+        session_dir: Option<&str>,
+        project_root: &Path,
+    ) -> Result<Sidecar, String> {
         let mut cmd = Command::new("php");
         cmd.arg("bin/server")
             .current_dir(project_root)
@@ -29,6 +72,10 @@ impl Sidecar {
             .env("AGENT_UI", "server")
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+
+        if let Some(dir) = session_dir {
+            cmd.env("AGENT_SESSION_DIR", dir);
+        }
 
         #[cfg(unix)]
         {
@@ -78,6 +125,11 @@ impl Sidecar {
             return Err("sidecar 端口无法连接".into());
         }
         Ok(Sidecar { child, port })
+    }
+
+    /// 兼容旧签名：不带 AGENT_SESSION_DIR。
+    pub fn start(workspace: &str, project_root: &Path) -> Result<Sidecar, String> {
+        Self::start_with_env(workspace, None, project_root)
     }
 
     pub fn port(&self) -> u16 {
@@ -131,6 +183,27 @@ mod tests {
         assert_eq!(parse_port_line("AGENT_LISTENING port=99999"), None);
     }
 
+    #[test]
+    fn slug_is_stable_and_sanitized() {
+        let a = project_slug("/Users/x/my-app");
+        let b = project_slug("/Users/x/my-app");
+        assert_eq!(a, b, "同一路径 slug 稳定");
+        assert!(a.starts_with("my-app-"), "slug 以清洗后的目录名开头: {a}");
+        assert!(
+            a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
+            "slug 只含 [a-z0-9-]: {a}"
+        );
+        assert_ne!(project_slug("/Users/x/other"), a, "不同路径 slug 不同");
+        // 非 ASCII 目录名整段被清洗，但 crc32 仍区分
+        assert_ne!(project_slug("/Users/x/项目甲"), project_slug("/Users/x/项目乙"));
+    }
+
+    #[test]
+    fn crc32_matches_known_vectors() {
+        assert_eq!(crc32(b""), 0);
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926, "IEEE 802.3 标准校验向量");
+    }
+
     /// 集成测试：真实 spawn php sidecar，验证生命周期 + 无孤儿。
     /// start 后 is_alive 为 true 证明 php 在 banner/日志写入后仍存活（stdout 管道保持开放）。
     #[test]
@@ -156,5 +229,60 @@ mod tests {
         sc.stop();
         assert!(!sc.is_alive(), "sidecar should be dead after stop");
         std::fs::remove_dir_all(&ws).ok();
+    }
+
+    /// 多项目并发：两个 sidecar（不同 workspace/session dir）同时存活、端口互不相同。
+    #[test]
+    fn two_sidecars_run_concurrently() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        std::env::set_var("AGENT_PROVIDER", "fake");
+        std::env::set_var("AGENT_SESSION_STORE", "memory");
+
+        let ws1 = std::env::temp_dir().join(format!("php-agent-mc-a-{}", std::process::id()));
+        let ws2 = std::env::temp_dir().join(format!("php-agent-mc-b-{}", std::process::id()));
+        let sd1 = ws1.join("sessions");
+        let sd2 = ws2.join("sessions");
+        std::fs::create_dir_all(&sd1).unwrap();
+        std::fs::create_dir_all(&sd2).unwrap();
+
+        let mut a = Sidecar::start_with_env(
+            &ws1.to_string_lossy(),
+            Some(&sd1.to_string_lossy()),
+            &root,
+        )
+        .expect("sidecar A should start");
+        let mut b = Sidecar::start_with_env(
+            &ws2.to_string_lossy(),
+            Some(&sd2.to_string_lossy()),
+            &root,
+        )
+        .expect("sidecar B should start");
+
+        assert!(a.is_alive() && b.is_alive());
+        assert_ne!(a.port(), b.port(), "OS 分配的端口不应相同");
+
+        // 各自探活自己的 /status
+        for port in [a.port(), b.port()] {
+            use std::io::{Read, Write};
+            let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+            stream
+                .write_all(format!("GET /status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").as_bytes())
+                .unwrap();
+            let mut buf = String::new();
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let _ = stream.read_to_string(&mut buf);
+            assert!(buf.contains("200"), "sidecar on {port} should answer /status");
+        }
+
+        a.stop();
+        b.stop();
+        assert!(!a.is_alive() && !b.is_alive());
+        std::fs::remove_dir_all(&ws1).ok();
+        std::fs::remove_dir_all(&ws2).ok();
     }
 }

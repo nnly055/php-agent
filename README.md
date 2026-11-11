@@ -252,6 +252,8 @@ curl -N -X POST http://127.0.0.1:8091/agent \
 ## 桌面应用
 
 Tauri 2 桌面壳（`desktop/`）：React 前端 + Rust 壳，复用 `php bin/server` 作为 sidecar。
+**多项目管理**：每个项目一个独立 PHP 进程（独立端口 / 工作区沙箱 / 会话存储目录），
+项目间真并行——一个项目跑长命令不会卡住另一个项目；同一项目内串行执行避免编辑冲突。
 
 ```bash
 cd desktop
@@ -262,12 +264,13 @@ npm run tauri dev
 环境要求：Rust stable（含 cargo）+ Node 22 + 系统 PHP（≥ 8.1，curl/json/mbstring），
 项目根先 `composer install`。
 
-- 壳启动时自动拉起 `php bin/server`：注入 `AGENT_SERVER_PORT=0`（动态端口，
-  从 stdout 的 `AGENT_LISTENING port=<port>` 行解析）、`AGENT_PERMISSIONS=ask`、
-  `AGENT_UI=server`，并等待端口探活就绪
-- 前端：流式聊天 + Markdown/diff 渲染、按需授权弹窗（Y/N/A 快捷键、变更预览）、
-  会话列表/切换/新建、workspace 选择（切换即重启 sidecar）、后端断开提示与自动重连
-- 退出时按进程组整组清理 sidecar（含 MCP stdio 子进程），无孤儿进程
+- **多项目标签页**：「添加项目」选目录即拉起专属 sidecar（`AGENT_SERVER_PORT=0`
+  动态端口，从 stdout 的 `AGENT_LISTENING port=<port>` 行解析探活；`AGENT_WORKSPACE`
+  为项目目录；`AGENT_SESSION_DIR=~/.php-agent/projects/<slug>/sessions` 会话按项目隔离）
+- 同一项目重复打开自动复用存活进程；标签关闭 = 进程退出、会话记录保留，可从折叠列表恢复
+- 每项目前端状态独立（zustand 多实例 + Context）：流式聊天、Markdown/diff 渲染、
+  按需授权弹窗（Y/N/A + 变更预览）、会话列表/切换/删除、断开横幅 + 分会话重连
+- 退出时全部 sidecar 按进程组整组清理（含 MCP stdio 子进程），无孤儿进程
 - dev 模式使用系统 PHP；免 PHP 依赖的单二进制打包分发见后续路线图
 
 ## 路线图

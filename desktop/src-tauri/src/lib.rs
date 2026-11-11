@@ -1,13 +1,25 @@
 pub mod sidecar;
 
-use sidecar::Sidecar;
+use sidecar::{project_slug, Sidecar};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 
+/// 一个已打开的项目会话 = 一个独立 PHP sidecar 进程（独立端口/工作区/会话目录）。
+struct RunningSession {
+    sidecar: Sidecar,
+    workspace: String,
+    session_dir: PathBuf,
+}
+
 struct AppState {
-    sidecar: Mutex<Option<Sidecar>>,
-    workspace: Mutex<String>,
+    /// sessionId → 运行中的 sidecar
+    sessions: Mutex<HashMap<String, RunningSession>>,
+    /// 项目列表（持久化，顺序即标签页顺序）
+    projects: Mutex<Vec<String>>,
+    /// 最近激活的 sessionId（启动时前端据此懒恢复）
+    last_session: Mutex<String>,
     project_root: PathBuf,
 }
 
@@ -16,76 +28,174 @@ fn desktop_json_path() -> PathBuf {
     PathBuf::from(home).join(".php-agent").join("desktop.json")
 }
 
-fn load_workspace(default: &str) -> String {
-    let path = desktop_json_path();
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(ws) = v.get("workspace").and_then(|w| w.as_str()) {
-                if std::path::Path::new(ws).is_dir() {
-                    return ws.to_string();
-                }
+#[derive(serde::Deserialize, Default)]
+struct PersistedState {
+    #[serde(default)]
+    projects: Vec<String>,
+    #[serde(default)]
+    last_session: String,
+    #[serde(default)]
+    last_workspace: Option<String>,
+    // 兼容 v0.3.0 旧格式（单 workspace 字段迁移为 projects[0]）
+    #[serde(default)]
+    workspace: Option<String>,
+}
+
+fn load_state() -> PersistedState {
+    let mut st = match std::fs::read_to_string(desktop_json_path()) {
+        Ok(text) => serde_json::from_str::<PersistedState>(&text).unwrap_or_default(),
+        Err(_) => PersistedState::default(),
+    };
+    // 旧格式迁移：workspace → projects
+    if st.projects.is_empty() {
+        if let Some(ws) = st.workspace.take() {
+            if std::path::Path::new(&ws).is_dir() {
+                st.projects.push(ws);
             }
         }
     }
-    default.to_string()
+    st.projects.retain(|p| std::path::Path::new(p).is_dir());
+    st
 }
 
-fn save_workspace(ws: &str) {
+fn save_state(projects: &[String], last_session: &str, last_workspace: &str) {
     let path = desktop_json_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&path, serde_json::json!({ "workspace": ws }).to_string());
+    let _ = std::fs::write(
+        &path,
+        serde_json::json!({
+            "projects": projects,
+            "last_session": last_session,
+            "last_workspace": if last_workspace.is_empty() { serde_json::Value::Null } else { serde_json::json!(last_workspace) },
+        })
+        .to_string(),
+    );
 }
 
-/// 停旧 sidecar 并按当前 workspace 拉起新的；成功 emit `backend://ready`，失败 emit `backend://error`。
-///
-/// 只接收 `AppHandle`（而非 `&AppState`），以便整体移入 `spawn_blocking` 的 'static 闭包，
-/// 避免阻塞 async runtime / 主线程。state 通过 `Manager::state` 在函数内解析。
-fn start_sidecar(app: &tauri::AppHandle) {
+/// 每项目独立的会话存储目录：~/.php-agent/projects/<slug>/sessions
+fn session_dir_for(workspace: &str) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home)
+        .join(".php-agent")
+        .join("projects")
+        .join(project_slug(workspace))
+        .join("sessions")
+}
+
+fn session_id_now() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("p-{:x}", nanos)
+}
+
+/// spawn 一个项目会话（幂等：同一路径已有存活实例则直接复用）。
+/// 成功 emit `backend://ready {sessionId, port, workspace}`；失败 emit `backend://error {sessionId?, message}`。
+/// 阻塞操作（spawn + 15s 探活）由调用方放入 spawn_blocking。
+fn open_session_inner(
+    app: &tauri::AppHandle,
+    workspace: &str,
+) -> Result<(String, u16), String> {
     let state = app.state::<AppState>();
-    let ws = state.workspace.lock().unwrap().clone();
-    // 停旧
+    let session_dir = session_dir_for(workspace);
+    let _ = std::fs::create_dir_all(&session_dir);
+
+    // 幂等：已有该工作区的存活会话直接复用
     {
-        let mut guard = state.sidecar.lock().unwrap();
-        if let Some(mut old) = guard.take() {
-            old.stop();
-            let _ = app.emit("backend://disconnected", serde_json::json!({}));
+        let guard = state.sessions.lock().unwrap();
+        for (id, running) in guard.iter() {
+            if running.workspace == workspace {
+                let port = running.sidecar.port();
+                let mut last = state.last_session.lock().unwrap();
+                *last = id.clone();
+                save_state(&state.projects.lock().unwrap(), &last, workspace);
+                let _ = app.emit(
+                    "backend://ready",
+                    serde_json::json!({ "sessionId": id, "port": port, "workspace": workspace }),
+                );
+                return Ok((id.clone(), port));
+            }
         }
     }
-    match Sidecar::start(&ws, &state.project_root) {
+
+    let session_id = session_id_now();
+    match Sidecar::start_with_env(workspace, Some(&session_dir.to_string_lossy()), &state.project_root) {
         Ok(sc) => {
             let port = sc.port();
-            *state.sidecar.lock().unwrap() = Some(sc);
-            let _ = app.emit("backend://ready", serde_json::json!({ "port": port }));
+            state.sessions.lock().unwrap().insert(
+                session_id.clone(),
+                RunningSession { sidecar: sc, workspace: workspace.to_string(), session_dir },
+            );
+            state.projects.lock().unwrap().iter().position(|p| p == workspace)
+                .unwrap_or_else(|| {
+                    state.projects.lock().unwrap().push(workspace.to_string());
+                    state.projects.lock().unwrap().len() - 1
+                });
+            let mut last = state.last_session.lock().unwrap();
+            *last = session_id.clone();
+            save_state(&state.projects.lock().unwrap(), &last, workspace);
+            let _ = app.emit(
+                "backend://ready",
+                serde_json::json!({ "sessionId": session_id, "port": port, "workspace": workspace }),
+            );
+            Ok((session_id, port))
         }
         Err(e) => {
-            let _ = app.emit("backend://error", serde_json::json!({ "message": e }));
+            let _ = app.emit(
+                "backend://error",
+                serde_json::json!({ "sessionId": session_id, "message": e }),
+            );
+            Err(e)
         }
     }
 }
 
-#[tauri::command]
-fn get_backend_url(state: State<AppState>) -> Result<String, String> {
-    let guard = state.sidecar.lock().unwrap();
-    match guard.as_ref() {
-        Some(sc) => Ok(format!("http://127.0.0.1:{}", sc.port())),
-        None => Err("backend 未就绪".into()),
+fn close_session_inner(app: &tauri::AppHandle, session_id: &str) -> bool {
+    let state = app.state::<AppState>();
+    let removed = state.sessions.lock().unwrap().remove(session_id);
+    if let Some(mut running) = removed {
+        running.sidecar.stop();
+        let _ = app.emit(
+            "backend://disconnected",
+            serde_json::json!({ "sessionId": session_id }),
+        );
+        true
+    } else {
+        false
     }
 }
 
 #[tauri::command]
-fn get_workspace(state: State<AppState>) -> String {
-    state.workspace.lock().unwrap().clone()
+fn list_projects() -> Vec<String> {
+    // 只读持久化列表（不含运行态）；运行态由前端经 sessions_ready 维护
+    load_state().projects
 }
 
 #[tauri::command]
-async fn pick_workspace(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
+fn get_last_session() -> serde_json::Value {
+    let st = load_state();
+    serde_json::json!({ "sessionId": st.last_session, "workspace": st.last_workspace })
+}
+
+#[tauri::command]
+async fn open_project(app: tauri::AppHandle, path: String) -> Result<serde_json::Value, String> {
+    if !std::path::Path::new(&path).is_dir() {
+        return Err("所选目录不存在".into());
+    }
+    let a = app.clone();
+    let p = path.clone();
+    let (session_id, port) = tauri::async_runtime::spawn_blocking(move || open_session_inner(&a, &p))
+        .await
+        .map_err(|e| format!("启动 backend 失败: {e}"))??;
+    Ok(serde_json::json!({ "sessionId": session_id, "port": port, "workspace": path }))
+}
+
+#[tauri::command]
+async fn add_project(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
     use tauri_plugin_dialog::DialogExt;
-    // blocking_pick_folder 会阻塞当前线程；放到阻塞线程池执行，避免卡住 async runtime。
     let dialog_app = app.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
         dialog_app.dialog().file().blocking_pick_folder()
@@ -93,35 +203,107 @@ async fn pick_workspace(
     .await
     .map_err(|e| format!("无法打开目录选择对话框: {e}"))?;
 
-    match picked {
-        Some(path) => {
-            // FilePath 可能是 Path 或 Url；into_path 统一转成 PathBuf（桌面端目录选择恒为 Path）。
-            let ws = path
-                .into_path()
-                .map_err(|e| format!("所选路径无效: {e}"))?
-                .to_string_lossy()
-                .to_string();
-            if !std::path::Path::new(&ws).is_dir() {
-                return Err("所选目录不存在".into());
-            }
-            *state.workspace.lock().unwrap() = ws.clone();
-            save_workspace(&ws);
-            // 重启 sidecar 同样走阻塞线程池，避免阻塞 async runtime。
-            let restart_app = app.clone();
-            tauri::async_runtime::spawn_blocking(move || start_sidecar(&restart_app))
-                .await
-                .map_err(|e| format!("重启 backend 失败: {e}"))?;
-            Ok(Some(ws))
+    let path = match picked {
+        Some(p) => p
+            .into_path()
+            .map_err(|e| format!("所选路径无效: {e}"))?
+            .to_string_lossy()
+            .to_string(),
+        None => return Ok(None),
+    };
+    if !std::path::Path::new(&path).is_dir() {
+        return Err("所选目录不存在".into());
+    }
+
+    // 加入持久化列表（已存在则不动）。State 引用不得跨越 await（Future 需 Send），
+    // 全部访问收进块作用域。
+    {
+        let state = app.state::<AppState>();
+        let mut projects = state.projects.lock().unwrap();
+        if !projects.iter().any(|p| p == &path) {
+            projects.push(path.clone());
         }
-        None => Ok(None),
+        let last = state.last_session.lock().unwrap().clone();
+        save_state(&projects, &last, &path);
+    }
+
+    let a = app.clone();
+    let path_for_spawn = path.clone();
+    let (session_id, port) = tauri::async_runtime::spawn_blocking(move || open_session_inner(&a, &path_for_spawn))
+        .await
+        .map_err(|e| format!("启动 backend 失败: {e}"))??;
+    Ok(Some(
+        serde_json::json!({ "sessionId": session_id, "port": port, "workspace": path }),
+    ))
+}
+
+#[tauri::command]
+fn close_project(app: tauri::AppHandle, session_id: String) -> bool {
+    close_session_inner(&app, &session_id)
+}
+
+#[tauri::command]
+fn remove_project(app: tauri::AppHandle, path: String) -> bool {
+    let state = app.state::<AppState>();
+    // 关掉该项目所有运行中的会话
+    let ids: Vec<String> = state
+        .sessions
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, r)| r.workspace == path)
+        .map(|(id, _)| id.clone())
+        .collect();
+    drop(state);
+    let mut removed = false;
+    for id in ids {
+        removed |= close_session_inner(&app, &id);
+    }
+    let state = app.state::<AppState>();
+    let mut projects = state.projects.lock().unwrap();
+    let before = projects.len();
+    projects.retain(|p| p != &path);
+    let last = state.last_session.lock().unwrap().clone();
+    // 被移除的项目若是最近激活项，清空恢复指针；否则保留
+    let prev_ws = load_state().last_workspace.unwrap_or_default();
+    let new_ws = if prev_ws == path { String::new() } else { prev_ws };
+    save_state(&projects, &last, &new_ws);
+    removed || projects.len() != before
+}
+
+#[tauri::command]
+fn get_backend_url(state: State<AppState>, session_id: String) -> Result<String, String> {
+    let guard = state.sessions.lock().unwrap();
+    match guard.get(&session_id) {
+        Some(running) => Ok(format!("http://127.0.0.1:{}", running.sidecar.port())),
+        None => Err(format!("会话 {session_id} 的 backend 未就绪")),
     }
 }
 
 #[tauri::command]
-async fn restart_backend(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || start_sidecar(&app))
+fn get_workspace(state: State<AppState>, session_id: String) -> Result<String, String> {
+    let guard = state.sessions.lock().unwrap();
+    guard
+        .get(&session_id)
+        .map(|r| r.workspace.clone())
+        .ok_or_else(|| format!("会话 {session_id} 不存在"))
+}
+
+#[tauri::command]
+async fn restart_session(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
+    let workspace = {
+        let state = app.state::<AppState>();
+        let guard = state.sessions.lock().unwrap();
+        guard
+            .get(&session_id)
+            .map(|r| r.workspace.clone())
+            .ok_or_else(|| format!("会话 {session_id} 不存在"))?
+    };
+    close_session_inner(&app, &session_id);
+    let a = app.clone();
+    tauri::async_runtime::spawn_blocking(move || open_session_inner(&a, &workspace))
         .await
-        .map_err(|e| format!("重启 backend 失败: {e}"))?;
+        .map_err(|e| format!("重启 backend 失败: {e}"))??;
     Ok(())
 }
 
@@ -133,8 +315,7 @@ pub fn run() {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let default_ws = project_root.to_string_lossy().to_string();
-    let workspace = load_workspace(&default_ws);
+    let persisted = load_state();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -144,37 +325,41 @@ pub fn run() {
             }
         }))
         .manage(AppState {
-            sidecar: Mutex::new(None),
-            workspace: Mutex::new(workspace),
+            sessions: Mutex::new(HashMap::new()),
+            projects: Mutex::new(persisted.projects.clone()),
+            last_session: Mutex::new(persisted.last_session.clone()),
             project_root,
         })
         .invoke_handler(tauri::generate_handler![
+            list_projects,
+            get_last_session,
+            open_project,
+            add_project,
+            close_project,
+            remove_project,
             get_backend_url,
             get_workspace,
-            pick_workspace,
-            restart_backend
+            restart_session
         ])
-        .setup(|app| {
+        .setup(|_app| {
             // SIGINT/SIGTERM（含终端 Ctrl+C）→ 干净退出，杜绝孤儿 php sidecar。
-            // "termination" feature 同时覆盖 SIGTERM；handler 跑在独立线程，
-            // AppHandle::exit 经事件循环代理发消息，线程安全。exit(0) 会触发
-            // RunEvent::ExitRequested，在下方 run 回调里统一停 sidecar。
-            let signal_handle = app.handle().clone();
+            let signal_handle = _app.handle().clone();
             if let Err(e) = ctrlc::set_handler(move || signal_handle.exit(0)) {
                 eprintln!("无法安装 SIGINT/SIGTERM 处理器: {e}");
             }
-            let handle = app.handle().clone();
-            start_sidecar(&handle);
+            // 项目 sidecar 改为前端懒启动（open_project）：避免启动时全量拉起 N 个进程
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app, event| {
-        // 窗口关闭与 exit(0)（信号）都路由到这里：整组 kill + wait，防孤儿 PHP。
+        // 窗口关闭与 exit(0)（信号）都路由到这里：全部整组 kill + wait，防孤儿 PHP。
         if let tauri::RunEvent::ExitRequested { .. } = event {
-            if let Some(mut sc) = app.state::<AppState>().sidecar.lock().unwrap().take() {
-                sc.stop();
+            let state = app.state::<AppState>();
+            let mut guard = state.sessions.lock().unwrap();
+            for (_, mut running) in guard.drain() {
+                running.sidecar.stop();
             }
         }
     });

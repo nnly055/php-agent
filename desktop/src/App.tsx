@@ -1,73 +1,183 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import { ConnectionBanner } from "./components/ConnectionBanner";
-import { useAppStore } from "./store/useAppStore";
+import { EmptyProjects, ProjectTabs } from "./components/layout/ProjectTabs";
+import { ProjectProvider } from "./store/useProjectStore";
+import { createProjectStore, type ProjectStore } from "./store/createProjectStore";
 import { useBackendLiveness } from "./hooks/useBackendLiveness";
-import { getBackendUrl, onBackendEvent } from "./lib/tauri";
-import { getStatus, listSessions, setBaseUrl } from "./lib/api";
+import {
+  addProject as addProjectDialog,
+  closeProject,
+  getLastSession,
+  listProjects,
+  onBackendEvent,
+  openProject,
+  type OpenedSession,
+} from "./lib/tauri";
+import { getStatus, listSessions } from "./lib/api";
 
-export default function App() {
-  const [ready, setReady] = useState(false);
-  const [bootError, setBootError] = useState<string | null>(null);
-  const store = useAppStore;
+/** 一个打开的项目标签：独立 store（独立 sidecar 进程）+ 项目路径。 */
+type ProjectTab = { id: string; path: string; store: ProjectStore };
 
-  useBackendLiveness(ready);
+function projectName(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
 
-  async function bootstrap() {
-    try {
-      setBootError(null);
-      const url = await getBackendUrl();
-      setBaseUrl(url);
-      store.getState().setBackend(url);
-      const [status, sessions] = await Promise.all([getStatus(), listSessions()]);
-      store.getState().setStatus(status);
-      store.getState().setSessions(sessions.sessions);
-      store.getState().setConnected(true);
-      setReady(true);
-    } catch (e: any) {
-      store.getState().setConnected(false);
-      setBootError(e?.message ?? "无法连接 PHP 内核");
-    }
-  }
+/** 当前项目的完整工作区（会话侧栏 + 聊天视图 + 授权弹窗），挂载时拉取 status/sessions。 */
+function ProjectWorkspace({ tab, onClose }: { tab: ProjectTab; onClose: () => void }) {
+  const store = tab.store;
+  useBackendLiveness(true);
+
+  const refresh = useCallback(async () => {
+    const url = store.getState().backendUrl;
+    const [status, sessions] = await Promise.all([getStatus(url), listSessions(url)]);
+    store.getState().setStatus(status);
+    store.getState().setSessions(sessions.sessions);
+    store.getState().setConnected(true);
+  }, [store]);
 
   useEffect(() => {
-    bootstrap();
-    const off = onBackendEvent((e) => {
-      if (e.kind === "ready") bootstrap();
-      else if (e.kind === "disconnected") store.getState().setConnected(false);
-      else if (e.kind === "error") store.getState().setError(e.message);
-    });
-    return () => { off.then((fns) => fns.forEach((f) => f())); };
-  }, []);
+    refresh().catch(() => store.getState().setConnected(false));
+    // 仅挂载时拉一次；后续由 liveness 轮询与回合结束刷新维护
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab.id]);
 
   function newSession() {
     store.getState().setActiveSession(`web-${Date.now().toString(36)}`, []);
   }
 
-  if (!ready) {
-    return (
-      <div className="grid h-screen place-items-center bg-bg text-muted">
-        {bootError ? (
-          <div className="flex max-w-sm flex-col items-center gap-4 text-center">
-            <div className="text-sm text-danger">✗ {bootError}</div>
-            <button
-              onClick={() => { setBootError(null); bootstrap(); }}
-              className="rounded-lg bg-primary-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary"
-            >
-              重试连接
-            </button>
-          </div>
-        ) : (
-          <div className="animate-pulse font-mono text-sm">正在连接 PHP 内核…</div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <>
-      <ConnectionBanner onRetry={bootstrap} />
-      <AppShell onNewSession={newSession} />
+      <ConnectionBanner onRetry={refresh} />
+      <AppShell onNewSession={newSession} onCloseProject={onClose} />
     </>
+  );
+}
+
+export default function App() {
+  const [tabs, setTabs] = useState<ProjectTab[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<string[]>([]);
+  const [booted, setBooted] = useState(false);
+  const [booting, setBooting] = useState<string | null>(null);
+
+  // 项目标签打开（幂等：同一路径复用已有 tab）
+  const openTab = useCallback((path: string, opened: OpenedSession) => {
+    setTabs((prev) => {
+      const existing = prev.find((t) => t.id === opened.sessionId);
+      if (existing) {
+        setActiveId(opened.sessionId);
+        return prev;
+      }
+      const store = createProjectStore();
+      store.getState().setSessionId(opened.sessionId);
+      store.getState().setBackend(`http://127.0.0.1:${opened.port}`);
+      return [...prev, { id: opened.sessionId, path, store }];
+    });
+    setActiveId(opened.sessionId);
+    setProjects((prev) => (prev.includes(path) ? prev : [...prev, path]));
+  }, []);
+
+  // 启动：读项目列表 + 懒恢复最近会话（仅恢复一个，其余点标签时再拉起）
+  useEffect(() => {
+    (async () => {
+      try {
+        const [projects, last] = await Promise.all([listProjects(), getLastSession()]);
+        setProjects(projects);
+        if (last.workspace && last.sessionId) {
+          await openTab(last.workspace, await openProject(last.workspace));
+        }
+      } catch {
+        /* 首次启动无持久化属正常；错误在 openProject 的 error 事件里可见 */
+      } finally {
+        setBooted(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // backend 事件路由到对应项目的 store
+  useEffect(() => {
+    let unlistens: Array<() => void> = [];
+    onBackendEvent((e) => {
+      if (e.kind === "disconnected") {
+        setTabs((prev) => {
+          const t = prev.find((x) => x.id === e.sessionId);
+          t?.store.getState().setConnected(false);
+          return prev;
+        });
+      } else if (e.kind === "error" && e.sessionId) {
+        setTabs((prev) => {
+          const t = prev.find((x) => x.id === e.sessionId);
+          t?.store.getState().setError(e.message);
+          return prev;
+        });
+      }
+      // ready 事件由 openProject 的返回值直接处理，这里不重复建 tab
+    }).then((fns) => { unlistens = fns; });
+    return () => { unlistens.forEach((f) => f()); };
+  }, []);
+
+  const openPath = useCallback(async (path: string) => {
+    setBooting(path);
+    try {
+      const opened = await openProject(path);
+      openTab(path, opened);
+    } finally {
+      setBooting(null);
+    }
+  }, [openTab]);
+
+  const addProject = useCallback(async () => {
+    setBooting("__dialog__");
+    try {
+      const opened = await addProjectDialog();
+      if (opened) openTab(opened.workspace, opened);
+    } finally {
+      setBooting(null);
+    }
+  }, [openTab]);
+
+  const closeTab = useCallback(async (tab: ProjectTab) => {
+    try { await closeProject(tab.id); } catch { /* 进程可能已退出 */ }
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.id !== tab.id);
+      setActiveId((cur) => (cur === tab.id ? next[next.length - 1]?.id ?? null : cur));
+      return next;
+    });
+  }, []);
+
+  const activeTab = tabs.find((t) => t.id === activeId) ?? null;
+
+  return (
+    <div className="flex h-screen flex-col bg-bg text-ink">
+      <ProjectTabs
+        tabs={tabs.map((t) => ({ id: t.id, name: projectName(t.path), path: t.path }))}
+        activeId={activeId}
+        projects={projects.filter((p) => !tabs.some((t) => t.path === p))}
+        onSelect={setActiveId}
+        onClose={(id) => { const t = tabs.find((x) => x.id === id); if (t) closeTab(t); }}
+        onAdd={addProject}
+        onOpen={(path) => openPath(path)}
+        booting={booting}
+      />
+      <div className="flex min-h-0 flex-1 flex-col">
+        {activeTab ? (
+          <ProjectProvider store={activeTab.store}>
+            <ProjectWorkspace tab={activeTab} onClose={() => { const t = activeTab; if (t) closeTab(t); }} />
+          </ProjectProvider>
+        ) : booted ? (
+          <EmptyProjects
+            projects={projects}
+            booting={booting}
+            onAdd={addProject}
+            onOpen={(path) => openPath(path)}
+          />
+        ) : (
+          <div className="grid h-full place-items-center animate-pulse font-mono text-sm text-muted">正在启动…</div>
+        )}
+      </div>
+    </div>
   );
 }

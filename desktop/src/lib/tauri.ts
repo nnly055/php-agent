@@ -1,21 +1,33 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export const getBackendUrl = () => invoke<string>("get_backend_url");
-export const getWorkspace = () => invoke<string>("get_workspace");
-export const pickWorkspace = () => invoke<string | null>("pick_workspace");
-export const restartBackend = () => invoke<void>("restart_backend");
+/** 一个打开的项目会话（= 一个 PHP sidecar 进程） */
+export type OpenedSession = { sessionId: string; port: number; workspace: string };
+
+export const listProjects = () => invoke<string[]>("list_projects");
+export const getLastSession = () =>
+  invoke<{ sessionId: string; workspace: string }>("get_last_session");
+export const openProject = (path: string) => invoke<OpenedSession>("open_project", { path });
+export const addProject = () => invoke<OpenedSession | null>("add_project");
+export const closeProject = (sessionId: string) => invoke<boolean>("close_project", { sessionId });
+export const removeProject = (path: string) => invoke<boolean>("remove_project", { path });
+export const getBackendUrl = (sessionId: string) => invoke<string>("get_backend_url", { sessionId });
+export const getWorkspace = (sessionId: string) => invoke<string>("get_workspace", { sessionId });
+export const restartSession = (sessionId: string) => invoke<void>("restart_session", { sessionId });
 
 export type BackendEvent =
-  | { kind: "ready"; port: number }
-  | { kind: "disconnected" }
-  | { kind: "error"; message: string };
+  | { kind: "ready"; sessionId: string; port: number; workspace: string }
+  | { kind: "disconnected"; sessionId: string }
+  | { kind: "error"; sessionId: string | null; message: string };
 
 export async function onBackendEvent(cb: (e: BackendEvent) => void): Promise<UnlistenFn[]> {
   const subs = await Promise.all([
-    listen<{ port: number }>("backend://ready", (e) => cb({ kind: "ready", port: e.payload.port })),
-    listen("backend://disconnected", () => cb({ kind: "disconnected" })),
-    listen<{ message: string }>("backend://error", (e) => cb({ kind: "error", message: e.payload.message })),
+    listen<{ sessionId: string; port: number; workspace: string }>("backend://ready", (e) =>
+      cb({ kind: "ready", sessionId: e.payload.sessionId, port: e.payload.port, workspace: e.payload.workspace })),
+    listen<{ sessionId: string }>("backend://disconnected", (e) =>
+      cb({ kind: "disconnected", sessionId: e.payload.sessionId })),
+    listen<{ sessionId?: string; message: string }>("backend://error", (e) =>
+      cb({ kind: "error", sessionId: e.payload.sessionId ?? null, message: e.payload.message })),
   ]);
   return subs;
 }

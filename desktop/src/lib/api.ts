@@ -1,10 +1,9 @@
 import { parseSseFrames, type AgentEvent } from "./sse";
 
-let baseUrl = "";
-export const setBaseUrl = (url: string) => { baseUrl = url; };
-export const getBaseUrl = () => baseUrl;
+// baseUrl 显式参数化：多项目 = 多 sidecar = 多连接，不允许全局隐式 base。
+// 旧的单参调用点已全部迁移（store 里持有各自的 backendUrl）。
 
-async function json<T>(path: string, init?: RequestInit): Promise<T> {
+async function json<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(baseUrl + path, {
     headers: { "Content-Type": "application/json" },
     ...init,
@@ -22,15 +21,15 @@ export type Status = {
 };
 export type SessionMeta = { id: string; title: string; createdAt: number; updatedAt: number; messageCount: number };
 
-export const getStatus = (signal?: AbortSignal) => json<Status>("/status", { signal });
-export const listSessions = (limit = 50) => json<{ sessions: SessionMeta[] }>(`/sessions?limit=${limit}`);
-export const loadSession = (id: string) => json<{ id: string; messages: any[] }>(`/sessions/${encodeURIComponent(id)}`);
-export const deleteSession = (id: string) => json<{ ok: boolean }>(`/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
-export const confirm = (id: string, decision: "y" | "n" | "a") =>
-  json<{ ok: boolean }>(`/confirm/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ decision }) });
+export const getStatus = (baseUrl: string, signal?: AbortSignal) => json<Status>(baseUrl, "/status", { signal });
+export const listSessions = (baseUrl: string, limit = 50) => json<{ sessions: SessionMeta[] }>(baseUrl, `/sessions?limit=${limit}`);
+export const loadSession = (baseUrl: string, id: string) => json<{ id: string; messages: any[] }>(baseUrl, `/sessions/${encodeURIComponent(id)}`);
+export const deleteSession = (baseUrl: string, id: string) => json<{ ok: boolean }>(baseUrl, `/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const confirm = (baseUrl: string, id: string, decision: "y" | "n" | "a") =>
+  json<{ ok: boolean }>(baseUrl, `/confirm/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ decision }) });
 
 /** POST /agent → SSE 事件异步迭代器 */
-export async function* agentStream(message: string, sessionId: string, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+export async function* agentStream(baseUrl: string, message: string, sessionId: string, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
   const resp = await fetch(baseUrl + "/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useAppStore } from "../../store/useAppStore";
+import { useProjectStore } from "../../store/useProjectStore";
 import { useAgentStream } from "../../hooks/useAgentStream";
 import { MessageBubble } from "./MessageBubble";
 import { Composer } from "./Composer";
@@ -7,8 +7,9 @@ import { Welcome } from "../Welcome";
 import { ConfirmDialog } from "../confirm/ConfirmDialog";
 
 export function ChatView() {
-  const messages = useAppStore((s) => s.messages);
-  const streaming = useAppStore((s) => s.streaming);
+  const store = useProjectStore();
+  const messages = store((s) => s.messages);
+  const streaming = store((s) => s.streaming);
   const { send, answerConfirm, abort } = useAgentStream();
   const endRef = useRef<HTMLDivElement>(null);
 

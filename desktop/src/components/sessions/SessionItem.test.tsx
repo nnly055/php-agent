@@ -32,7 +32,8 @@ describe("SessionItem", () => {
     expect(deleteSession).not.toHaveBeenCalled();
     expect(await screen.findByText(/确定删除/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith("s1"));
+    // baseUrl 参数化后：第一个参数为项目 store 的 backendUrl（默认单例为 ""）
+    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(expect.any(String), "s1"));
   });
 
   it("open surfaces error in store when loadSession fails", async () => {

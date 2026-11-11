@@ -1,20 +1,23 @@
-import { useAppStore } from "../store/useAppStore";
-import { restartBackend } from "../lib/tauri";
+import { useProjectStore } from "../store/useProjectStore";
+import { restartSession, getWorkspace } from "../lib/tauri";
 import { Button } from "./ui/button";
 import { WifiOff, RefreshCw } from "lucide-react";
 
 export function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
-  const connected = useAppStore((s) => s.connected);
-  const error = useAppStore((s) => s.error);
+  const store = useProjectStore();
+  const connected = store((s) => s.connected);
+  const error = store((s) => s.error);
   if (connected && !error) return null;
 
   async function reconnect() {
-    useAppStore.getState().setError(null);
+    store.getState().setError(null);
     try {
-      await restartBackend();
+      // workspace 校验当前 sidecar 存活；restart 按同 workspace 重拉进程
+      await getWorkspace(store.getState().sessionId);
+      await restartSession(store.getState().sessionId);
       onRetry();
     } catch (e: any) {
-      useAppStore.getState().setError(e?.message ?? "重连失败");
+      store.getState().setError(e?.message ?? "重连失败");
     }
   }
 

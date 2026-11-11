@@ -1,12 +1,13 @@
 import { useEffect } from "react";
-import { useAppStore } from "../../store/useAppStore";
+import { useProjectStore } from "../../store/useProjectStore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { DiffView } from "../chat/DiffView";
 import { ShieldAlert } from "lucide-react";
 
 export function ConfirmDialog({ onAnswer }: { onAnswer: (d: "y" | "n" | "a") => void }) {
-  const pending = useAppStore((s) => s.pendingConfirm);
+  const store = useProjectStore();
+  const pending = store((s) => s.pendingConfirm);
 
   useEffect(() => {
     if (!pending) return;
