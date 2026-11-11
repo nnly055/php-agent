@@ -49,3 +49,4 @@ body {
 .prose-agent blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted); }
 .prose-agent table { border-collapse: collapse; }
 .prose-agent th, .prose-agent td { border: 1px solid var(--border); padding: 4px 8px; }
+.prose-agent img { max-width: 100%; }

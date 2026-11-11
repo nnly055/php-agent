@@ -15,6 +15,8 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onA
     setText("");
   }
   function onKey(e: KeyboardEvent) {
+    // IME 组合态（如中文拼音选词）的回车用于确认候选词，不应触发发送
+    if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
   }
 
