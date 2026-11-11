@@ -6,25 +6,31 @@ namespace PhpAgent;
 
 /**
  * 运行时配置：优先读项目根目录 .env，shell 环境变量作为兜底。
+ * server 模式（shellWins=true）反转优先级，shell 权威。
  */
 final class Config
 {
+    /** 应用版本（/status 展示用；发版手动 bump，单一来源） */
+    public const VERSION = '0.2.0';
+
     private function __construct(private array $env)
     {
     }
 
-    public static function load(string $root): self
+    /**
+     * @param bool $shellWins true = shell AGENT_* 环境变量覆盖 .env（桌面 sidecar：壳注入的
+     *                        端口/工作目录权威）；false（默认）= .env 覆盖 shell（CLI 行为不变）
+     */
+    public static function load(string $root, bool $shellWins = false): self
     {
-        $env = [];
-
-        // shell / 进程环境变量兜底
+        $shell = [];
         foreach (getenv() as $k => $v) {
             if (str_starts_with($k, 'AGENT_') && $v !== '' && $v !== false) {
-                $env[$k] = (string) $v;
+                $shell[$k] = (string) $v;
             }
         }
 
-        // .env 覆盖 shell（本地文件是最显式的声明）
+        $fileEnv = [];
         $file = $root . '/.env';
         if (is_file($file)) {
             foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
@@ -36,11 +42,12 @@ final class Config
                 $k = trim($k);
                 $v = trim(trim($v), "\"'");
                 if ($k !== '') {
-                    $env[$k] = $v;
+                    $fileEnv[$k] = $v;
                 }
             }
         }
 
+        $env = $shellWins ? array_merge($fileEnv, $shell) : array_merge($shell, $fileEnv);
         return new self($env);
     }
 
@@ -99,7 +106,7 @@ final class Config
 
     public function serverPort(): int
     {
-        return max(1, (int) ($this->env['AGENT_SERVER_PORT'] ?? 8091));
+        return max(0, (int) ($this->env['AGENT_SERVER_PORT'] ?? 8091));
     }
 
     // ── 插件与会话 ──────────────────────────────────────────

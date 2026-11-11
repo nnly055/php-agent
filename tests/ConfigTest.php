@@ -53,4 +53,56 @@ final class ConfigTest extends TestCase
         self::assertSame(128000, $c->contextTokens());
         self::assertSame(0.8, $c->compactThreshold());
     }
+
+    public function testServerPortAllowsZeroForAutoAssign(): void
+    {
+        self::assertSame(0, $this->configWith("AGENT_SERVER_PORT=0\n")->serverPort());
+    }
+
+    public function testServerPortDefaultsTo8091(): void
+    {
+        self::assertSame(8091, $this->configWith("AGENT_PROVIDER=fake\n")->serverPort());
+    }
+
+    public function testVersionConstantExists(): void
+    {
+        self::assertSame('0.2.0', Config::VERSION);
+    }
+
+    public function testDefaultModeEnvFileOverridesShell(): void
+    {
+        putenv('AGENT_SERVER_PORT=0');
+        try {
+            // 默认模式：.env 覆盖 shell → 8091
+            self::assertSame(8091, $this->configWith("AGENT_SERVER_PORT=8091\n")->serverPort());
+        } finally {
+            putenv('AGENT_SERVER_PORT');
+        }
+    }
+
+    public function testShellWinsModeShellOverridesEnvFile(): void
+    {
+        putenv('AGENT_SERVER_PORT=0');
+        try {
+            $this->configWith("AGENT_SERVER_PORT=8091\n"); // 写入 .env（默认加载）
+            self::assertSame(0, Config::load($this->dir, true)->serverPort()); // shell-wins → 0
+        } finally {
+            putenv('AGENT_SERVER_PORT');
+        }
+    }
+
+    public function testShellWinsWorkspaceOverridesEnvFile(): void
+    {
+        $ws = sys_get_temp_dir() . '/php-agent-ws-' . uniqid();
+        mkdir($ws, 0777, true);
+        putenv('AGENT_WORKSPACE=' . $ws);
+        try {
+            $this->configWith("AGENT_WORKSPACE=/nonexistent-xyz\n");
+            // workspace() 返回 realpath 解析后的路径（macOS /var → /private/var），故比对 realpath($ws)
+            self::assertSame(realpath($ws), Config::load($this->dir, true)->workspace());
+        } finally {
+            putenv('AGENT_WORKSPACE');
+            @rmdir($ws);
+        }
+    }
 }

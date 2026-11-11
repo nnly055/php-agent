@@ -16,6 +16,7 @@ namespace PhpAgent\LLM;
  *   message_end       {stopReason}
  *   error             {message}
  *   notice            {text}         钩子向 UI 的通知（如上下文压缩）
+ *   confirm_request   {id, tool, input, preview}  工具授权请求（server）
  */
 final class StreamEvent
 {
@@ -73,5 +74,11 @@ final class StreamEvent
     public static function notice(string $text): self
     {
         return new self('notice', ['text' => $text]);
+    }
+
+    /** 工具授权请求（server ask 模式）：前端弹确认 Dialog，经 POST /confirm/{id} 回传决定 */
+    public static function confirmRequest(string $id, string $tool, array $input, string $preview): self
+    {
+        return new self('confirm_request', ['id' => $id, 'tool' => $tool, 'input' => $input, 'preview' => $preview]);
     }
 }

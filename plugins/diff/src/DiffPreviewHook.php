@@ -11,12 +11,25 @@ use PhpAgent\Hook\AgentHook;
  * 用户「先看变更、再决定 Y/n/a」。新文件给出摘要提示。
  *
  * 加载顺序保证：项目插件注册的钩子先于 bin/agent 手动装配的 ConfirmHook 执行。
- * 注意：server 模式下输出进入服务进程日志（前端可在 tool_result 里看到 diff）。
+ * 注意：server 模式（AGENT_UI=server）下 DiffPlugin 注入 no-op 输出回调，
+ * 预览不落到 sidecar stdout；桌面端经 ConfirmBroker 的 confirm_request 获取预览。
  */
 final class DiffPreviewHook implements AgentHook
 {
-    public function __construct(private readonly string $workspace)
+    /** @param \Closure(string): void|null $output null = 默认 echo（CLI）；server 传 no-op */
+    public function __construct(
+        private readonly string $workspace,
+        private readonly ?\Closure $output = null,
+    ) {
+    }
+
+    private function write(string $s): void
     {
+        if ($this->output !== null) {
+            ($this->output)($s);
+        } else {
+            echo $s;
+        }
     }
 
     public function events(): array
@@ -37,26 +50,26 @@ final class DiffPreviewHook implements AgentHook
 
         $abs = str_starts_with($path, '/') ? $path : $this->workspace . '/' . $path;
 
-        echo "\n  \033[36m▶ 变更预览: {$path}\033[0m\n";
+        $this->write("\n  \033[36m▶ 变更预览: {$path}\033[0m\n");
 
         if (!is_file($abs)) {
             $bytes = strlen((string) ($input['content'] ?? ''));
             $lines = substr_count((string) ($input['content'] ?? ''), "\n") + 1;
-            echo "  \033[32m(新文件 · {$lines} 行 · {$bytes} bytes)\033[0m\n";
+            $this->write("  \033[32m(新文件 · {$lines} 行 · {$bytes} bytes)\033[0m\n");
             return;
         }
         if ((filesize($abs) ?: 0) > DiffRenderer::MAX_DIFF_BYTES) {
-            echo "  \033[2m(原文件过大，跳过预览)\033[0m\n";
+            $this->write("  \033[2m(原文件过大，跳过预览)\033[0m\n");
             return;
         }
 
         $old = (string) file_get_contents($abs);
         $diff = DiffRenderer::render($old, (string) ($input['content'] ?? ''), 40);
         if ($diff === '') {
-            echo "  \033[2m(内容无变化)\033[0m\n";
+            $this->write("  \033[2m(内容无变化)\033[0m\n");
             return;
         }
-        echo $this->indent($diff) . "\n";
+        $this->write($this->indent($diff) . "\n");
     }
 
     private function indent(string $text): string

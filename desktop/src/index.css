@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0b0d12;
+  --surface: #141821;
+  --elevated: #1a1f2b;
+  --primary: #8b8df6;
+  --primary-deep: #5b5bd6;
+  --info: #38bdf8;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --thinking: #e879f9;
+  --text: #e8eaf2;
+  --muted: #8a90a6;
+  --border: #262b38;
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Geist, Inter, system-ui, "PingFang SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 自绘滚动条（按本调色板，不用浏览器默认） */
+* { scrollbar-width: thin; scrollbar-color: var(--elevated) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--elevated);
+  border-radius: 8px;
+  border: 2px solid var(--bg);
+}
+*::-webkit-scrollbar-thumb:hover { background: #2a3040; }
+
+::selection { background: color-mix(in srgb, var(--primary) 35%, transparent); }
+
+/* Markdown 排版（chat 消息正文） */
+.prose-agent p { margin: 0.4em 0; }
+.prose-agent ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
+.prose-agent ol { list-style: decimal; padding-left: 1.4em; margin: 0.4em 0; }
+.prose-agent h1, .prose-agent h2, .prose-agent h3 { color: var(--text); font-weight: 600; margin: 0.6em 0 0.3em; }
+.prose-agent blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted); }
+.prose-agent table { border-collapse: collapse; }
+.prose-agent th, .prose-agent td { border: 1px solid var(--border); padding: 4px 8px; }
+.prose-agent img { max-width: 100%; }

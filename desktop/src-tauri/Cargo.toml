@@ -1,0 +1,28 @@
+[package]
+name = "php-agent-desktop"
+version = "0.2.0"
+description = "PHP Agent Desktop"
+edition = "2021"
+
+[lib]
+name = "php_agent_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ctrlc = { version = "3", features = ["termination"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

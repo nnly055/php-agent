@@ -30,6 +30,7 @@ final class DiffPlugin implements Plugin
     {
         $workspace = $kernel->config()->workspace();
         $kernel->registerTool(DiffWriteFileTool::wrap($workspace)); // 同名覆盖内置 write_file
-        $kernel->addHook(new DiffPreviewHook($workspace));          // 先于 ConfirmHook 执行
+        $output = getenv('AGENT_UI') === 'server' ? static function (string $s): void {} : null;
+        $kernel->addHook(new DiffPreviewHook($workspace, $output)); // 先于 ConfirmHook 执行；server 静默
     }
 }
