@@ -10,7 +10,6 @@ use tauri::{Emitter, Manager, State};
 struct RunningSession {
     sidecar: Sidecar,
     workspace: String,
-    session_dir: PathBuf,
 }
 
 struct AppState {
@@ -84,6 +83,36 @@ fn session_dir_for(workspace: &str) -> PathBuf {
         .join("sessions")
 }
 
+/// 解析 PHP 解释器与后端 cwd（三级回退，返回 (php 命令, bin/server 的工作目录)）：
+///   1. env PHP_AGENT_PHP（开发期覆盖）
+///   2. bundle 资源里的静态 php（resources/php-agent/php，打包分发零系统依赖）
+///   3. 系统 "php"（dev 兜底）
+/// bundled 模式下 cwd = 资源目录 php-agent/，bin/server 的 $root 指向它，
+/// 插件发现与 public/ 资源结构在打包后保持不变。
+fn resolve_backend(app: &tauri::AppHandle) -> (String, PathBuf) {
+    if let Ok(custom) = std::env::var("PHP_AGENT_PHP") {
+        if !custom.is_empty() {
+            let root = app.state::<AppState>().project_root.clone();
+            return (custom, root);
+        }
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        let bundled = res.join("php-agent");
+        let php = bundled.join("php");
+        if php.is_file() {
+            // resource 拷贝可能丢失可执行位，启动前确保
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&php, std::fs::Permissions::from_mode(0o755));
+            }
+            return (php.to_string_lossy().to_string(), bundled);
+        }
+    }
+    let root = app.state::<AppState>().project_root.clone();
+    ("php".to_string(), root)
+}
+
 fn session_id_now() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -122,12 +151,18 @@ fn open_session_inner(
     }
 
     let session_id = session_id_now();
-    match Sidecar::start_with_env(workspace, Some(&session_dir.to_string_lossy()), &state.project_root) {
+    let (php_bin, backend_cwd) = resolve_backend(app);
+    match Sidecar::start_with_env(
+        &php_bin,
+        &backend_cwd,
+        workspace,
+        Some(&session_dir.to_string_lossy()),
+    ) {
         Ok(sc) => {
             let port = sc.port();
             state.sessions.lock().unwrap().insert(
                 session_id.clone(),
-                RunningSession { sidecar: sc, workspace: workspace.to_string(), session_dir },
+                RunningSession { sidecar: sc, workspace: workspace.to_string() },
             );
             state.projects.lock().unwrap().iter().position(|p| p == workspace)
                 .unwrap_or_else(|| {

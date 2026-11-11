@@ -271,12 +271,28 @@ npm run tauri dev
 - 每项目前端状态独立（zustand 多实例 + Context）：流式聊天、Markdown/diff 渲染、
   按需授权弹窗（Y/N/A + 变更预览）、会话列表/切换/删除、断开横幅 + 分会话重连
 - 退出时全部 sidecar 按进程组整组清理（含 MCP stdio 子进程），无孤儿进程
-- dev 模式使用系统 PHP；免 PHP 依赖的单二进制打包分发见后续路线图
+- dev 模式使用系统 PHP；**打包分发（免系统 PHP 依赖）**见下节
+
+### 打包分发
+
+```bash
+bash desktop/scripts/bundle-backend.sh   # 组装 PHP 后端：静态 php + 内核代码 → resources/php-agent/
+npm run tauri build                       # 产出 .app / .dmg（macOS）
+```
+
+- **静态 PHP**：取 [static-php-cli](https://github.com/static-php/static-php-cli) 预编译二进制
+  （默认 8.2.31，13MB，含 curl/mbstring/sqlite3/redis/pcntl 等全部必需扩展），带本地缓存与
+  下载验证（重试 + 文件格式校验），可用 `PHP_VERSION` / `FORCE_PHP=1` 控制
+- 内核代码目录随 bundle 进 resources（src/bin/plugins/public/vendor 原样保留，
+  插件发现与 public 资源结构不变）；产物不入库（.gitignore），构建时重新生成
+- Rust 侧 PHP 解析三级回退：`PHP_AGENT_PHP` 环境变量 → bundle 资源里的静态 php
+  （启动前自动 chmod 755）→ 系统 `php`（dev 兜底）
+- Windows/Linux：bundle-backend.sh 依据 `uname` 下载对应产物，tauri build 在对应平台执行即可
 
 ## 路线图
 
 - [x] 桌面壳 MVP：Tauri sidecar 加载 PHP 内核（dev 模式，见「桌面应用」；打包分发见下条）
-- [ ] 桌面壳打包分发：FrankenPHP 内嵌 PHP 单二进制后端（免系统 PHP 依赖）
+- [x] 桌面壳打包分发：静态 PHP sidecar（static-php-cli 产物）+ 资源目录 bundle，免系统 PHP 依赖（见「打包分发」）
 - [x] MCP 客户端接入（tools + stdio + Streamable HTTP，零依赖内置，见上方「MCP 工具（客户端）」）
 - [x] 流式 diff 渲染（write_file 变更可视化，授权前 diff 预览 + 结果 diff，见「权限模式与审计」）
 - [x] 长会话上下文压缩（compact 插件：阈值自动触发 + /compact 手动，见「上下文压缩」）

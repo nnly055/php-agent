@@ -7,7 +7,23 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
+> 桌面壳多项目管理（每项目一进程）+ 打包分发（免系统 PHP 依赖）。
+> 测试：PHP 123 + 前端 36 + Rust 5，三端全绿。
+
 ### 新增
+
+- **打包分发（免系统 PHP 依赖）**
+  - `desktop/scripts/bundle-backend.sh`：下载 static-php-cli 预编译静态 PHP（13MB，
+    含 curl/mbstring/sqlite3/redis/pcntl）+ 组装内核代码目录（src/bin/plugins/public/vendor
+    原样保留）到 `desktop/src-tauri/resources/php-agent/`；带缓存、重试与产物格式校验
+  - Rust 壳 PHP 解析三级回退：`PHP_AGENT_PHP` env → bundle 静态 php（自动 chmod 755）→
+    系统 `php`；bundled 模式 cwd 指向资源目录，插件发现与 public 结构打包后不变
+  - `tauri.conf.json` 声明 bundle resources + 全套图标（tauri icon 生成 icns/ico/png）
+  - `npm run tauri build` 产出 `PHP Agent.app`（47.7 MiB）与 dmg（16.7 MiB），
+    用户机器无需安装 PHP（`env -i` 空环境冒烟通过：bundled php 独立拉起 bin/server）
+  - 冒烟脚本内置（autoload + 必需扩展检查；修复 pipefail+grep -q 的 SIGPIPE race）
 
 - **桌面壳多项目管理（每项目一进程）**
   - Rust 壳从单 sidecar 改为会话表：每个项目拉起独立 PHP 进程
@@ -213,7 +229,8 @@
 - 端到端（fake provider）：写文件 → 运行 `php demo/hello.php` → 输出 `Hello from PHP Agent!`（exit 0）
 - SSE 服务：`POST /agent` 完整事件流（tool_use → result 回填 → 流式文本 → final 帧）
 
-[Unreleased]: https://github.com/nnly055/php-agent/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nnly055/php-agent/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nnly055/php-agent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nnly055/php-agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nnly055/php-agent/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nnly055/php-agent/releases/tag/v0.1.0

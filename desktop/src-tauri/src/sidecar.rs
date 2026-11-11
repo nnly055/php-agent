@@ -56,16 +56,20 @@ pub fn crc32(data: &[u8]) -> u32 {
 }
 
 impl Sidecar {
-    /// spawn `php bin/server`，注入 env，阻塞等待端口行 + 探活。
+    /// spawn `php bin/server`，阻塞等待端口行 + 探活。
+    /// `php_bin` 为 PHP 解释器（bundled 静态二进制或系统 php）；
+    /// `cwd` 为内核代码根（bundled 资源目录或项目根），`bin/server` 的
+    /// `$root = dirname(__DIR__)` 由此确定，plugins/public/vendor 全在其中。
     /// `session_dir` 为空则不注入 AGENT_SESSION_DIR（PHP 侧用默认 ~/.php-agent/sessions）。
     pub fn start_with_env(
+        php_bin: &str,
+        cwd: &Path,
         workspace: &str,
         session_dir: Option<&str>,
-        project_root: &Path,
     ) -> Result<Sidecar, String> {
-        let mut cmd = Command::new("php");
+        let mut cmd = Command::new(php_bin);
         cmd.arg("bin/server")
-            .current_dir(project_root)
+            .current_dir(cwd)
             .env("AGENT_SERVER_PORT", "0")
             .env("AGENT_WORKSPACE", workspace)
             .env("AGENT_PERMISSIONS", "ask")
@@ -125,11 +129,6 @@ impl Sidecar {
             return Err("sidecar 端口无法连接".into());
         }
         Ok(Sidecar { child, port })
-    }
-
-    /// 兼容旧签名：不带 AGENT_SESSION_DIR。
-    pub fn start(workspace: &str, project_root: &Path) -> Result<Sidecar, String> {
-        Self::start_with_env(workspace, None, project_root)
     }
 
     pub fn port(&self) -> u16 {
@@ -220,7 +219,8 @@ mod tests {
         std::env::set_var("AGENT_SESSION_STORE", "memory");
         let ws = std::env::temp_dir().join(format!("php-agent-sc-test-{}", std::process::id()));
         std::fs::create_dir_all(&ws).unwrap();
-        let mut sc = Sidecar::start(&ws.to_string_lossy(), &root).expect("sidecar should start");
+        let mut sc =
+            Sidecar::start_with_env("php", &root, &ws.to_string_lossy(), None).expect("sidecar should start");
         assert!(sc.port() > 0, "port should be assigned");
         assert!(
             sc.is_alive(),
@@ -251,15 +251,17 @@ mod tests {
         std::fs::create_dir_all(&sd2).unwrap();
 
         let mut a = Sidecar::start_with_env(
+            "php",
+            &root,
             &ws1.to_string_lossy(),
             Some(&sd1.to_string_lossy()),
-            &root,
         )
         .expect("sidecar A should start");
         let mut b = Sidecar::start_with_env(
+            "php",
+            &root,
             &ws2.to_string_lossy(),
             Some(&sd2.to_string_lossy()),
-            &root,
         )
         .expect("sidecar B should start");
 
