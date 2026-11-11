@@ -19,7 +19,7 @@ final class StdioTransport implements Transport
     /** @var resource stdin 写端 */
     private $stdin;
 
-    /** @var resource stdout 读端（阻塞） */
+    /** @var resource stdout 读端（非阻塞：半行卡住时由 deadline 兜底超时，EOF 不再紧转） */
     private $stdout;
 
     /** @var resource stderr 读端（非阻塞，随读随排空防管道写满死锁） */
@@ -62,6 +62,9 @@ final class StdioTransport implements Transport
         $this->stdin = $pipes[0];
         $this->stdout = $pipes[1];
         $this->stderr = $pipes[2];
+        // stdout 必须非阻塞：阻塞流上 stream_get_line 会在 select 报告可读后死等换行，
+        // server 发出半行就卡住时 request() 永久挂起，timeout 形同虚设
+        stream_set_blocking($this->stdout, false);
         stream_set_blocking($this->stderr, false);
     }
 
@@ -73,13 +76,19 @@ final class StdioTransport implements Transport
         $this->sendLine($payload);
         $id = $payload['id'];
         $deadline = microtime(true) + $timeout;
+        $buf = ''; // 本次请求的行缓冲：残留半行留在这里等补完，deadline 到点即抛超时
+        $stdoutEof = false;
 
         while (true) {
             $remaining = $deadline - microtime(true);
             if ($remaining <= 0) {
                 throw new \RuntimeException("MCP server '{$this->command}' 响应超时（{$timeout}s）");
             }
-            $read = [$this->stdout, $this->stderr];
+            $read = [];
+            if (!$stdoutEof) {
+                $read[] = $this->stdout;
+            }
+            $read[] = $this->stderr;
             $write = null;
             $except = null;
             $selected = @stream_select($read, $write, $except, 0, (int) ($remaining * 1_000_000));
@@ -91,27 +100,41 @@ final class StdioTransport implements Transport
             }
             foreach ($read as $stream) {
                 if ($stream === $this->stdout) {
-                    $line = stream_get_line($this->stdout, self::MAX_LINE_BYTES, "\n");
-                    if ($line === false) {
+                    $chunk = fread($this->stdout, 65536);
+                    if ($chunk === false) {
+                        continue; // 暂不可读，回顶部重新 select
+                    }
+                    $buf .= $chunk;
+                    if (strlen($buf) > self::MAX_LINE_BYTES) {
+                        throw new \RuntimeException("MCP server '{$this->command}' 单行输出超过上限（" . self::MAX_LINE_BYTES . " 字节）");
+                    }
+                    // 逐个取出完整行处理（id 匹配 / 通知暂存 / 非法行忽略，逻辑不变）
+                    while (($nl = strpos($buf, "\n")) !== false) {
+                        $line = substr($buf, 0, $nl);
+                        $buf = substr($buf, $nl + 1);
+                        if ($line === '') {
+                            continue;
+                        }
+                        $msg = json_decode($line, true);
+                        if (!is_array($msg)) {
+                            continue; // 非法行忽略
+                        }
+                        if (($msg['id'] ?? null) === $id) {
+                            return $msg;
+                        }
+                        if (!array_key_exists('id', $msg)) {
+                            $this->recentNotifications[] = $msg;
+                            if (count($this->recentNotifications) > 10) {
+                                array_shift($this->recentNotifications);
+                            }
+                        }
+                    }
+                    if ($chunk === '' || feof($this->stdout)) {
+                        // stdout 已 EOF：不再放进 select（否则 EOF 恒可读导致紧转），
+                        // 让 deadline 正常走完；进程已死则维持既有「进程已退出」异常
+                        $stdoutEof = true;
                         if (!proc_get_status($this->process)['running']) {
                             throw new \RuntimeException("MCP server 进程已退出: {$this->stderrTail()}");
-                        }
-                        continue;
-                    }
-                    if ($line === '') {
-                        continue;
-                    }
-                    $msg = json_decode($line, true);
-                    if (!is_array($msg)) {
-                        continue; // 非法行忽略
-                    }
-                    if (($msg['id'] ?? null) === $id) {
-                        return $msg;
-                    }
-                    if (!array_key_exists('id', $msg)) {
-                        $this->recentNotifications[] = $msg;
-                        if (count($this->recentNotifications) > 10) {
-                            array_shift($this->recentNotifications);
                         }
                     }
                 } elseif ($stream === $this->stderr) {
@@ -149,6 +172,12 @@ final class StdioTransport implements Transport
         $this->process = null;
     }
 
+    /**
+     * 阻塞写一行到子进程 stdin。
+     * 前提假设：请求载荷远小于管道缓冲区（macOS/Linux 通常 64KB 起），
+     * 阻塞写立即完成，不会超过 request() 的 deadline 窗口；
+     * 超大载荷需要「select 可写 + 分片写」的独立循环，当前用例不涉及。
+     */
     private function sendLine(array $payload): void
     {
         $line = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";

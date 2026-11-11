@@ -84,4 +84,17 @@ final class StdioTransportTest extends TestCase
         $t->request(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize', 'params' => []], 2);
         $t->close();
     }
+
+    public function testPartialLineStillTimesOut(): void
+    {
+        // 发出半行后卡死的子进程：阻塞读会在此永久挂起绕过 timeout，非阻塞读由 deadline 抛超时
+        $t = new StdioTransport(PHP_BINARY, ['-r', 'fwrite(STDOUT, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":"); fflush(STDOUT); sleep(30);']);
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('超时');
+        try {
+            $t->request(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize', 'params' => []], 1);
+        } finally {
+            $t->close();
+        }
+    }
 }
