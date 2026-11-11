@@ -27,8 +27,10 @@ final class ConfirmBroker
     private ?\Closure $emit = null;
     private ?string $activeId = null;
 
-    public function __construct(private readonly float $timeoutSeconds = 120.0)
-    {
+    public function __construct(
+        private readonly float $timeoutSeconds = 120.0,
+        private readonly ?string $workspace = null,
+    ) {
     }
 
     /** @param \Closure(StreamEvent): void $emit */
@@ -47,16 +49,18 @@ final class ConfirmBroker
     {
         $id = uniqid('cf_', true);
         $preview = $this->buildPreview($tool, $input);
-        if ($this->emit !== null) {
-            ($this->emit)(StreamEvent::confirmRequest($id, $tool, $input, $preview));
-        }
 
+        // 先注册 pending/activeId/定时器，再发事件：emitter 若同步 resolve() 也能命中
         $deferred = new Deferred();
         $this->pending[$id] = $deferred;
         $this->activeId = $id;
         $this->timers[$id] = Loop::addTimer($this->timeoutSeconds, function () use ($id): void {
             $this->settle($id, 'n');
         });
+
+        if ($this->emit !== null) {
+            ($this->emit)(StreamEvent::confirmRequest($id, $tool, $input, $preview));
+        }
 
         try {
             $decision = Async\await($deferred->promise());
@@ -116,9 +120,11 @@ final class ConfirmBroker
         if ($path === '') {
             return '';
         }
-        // 相对路径基于 workspace；broker 不持有 workspace，约定 input.path 已由前端/工具传相对或绝对。
-        // 这里仅对绝对路径或可定位文件算 diff；定位不到则给新文件摘要。
+        // 相对路径基于 workspace 拼绝对路径；定位不到则给新文件摘要。
         $abs = $path;
+        if (!str_starts_with($path, '/') && $this->workspace !== null) {
+            $abs = rtrim($this->workspace, '/') . '/' . $path;
+        }
         if (!is_file($abs)) {
             $lines = substr_count($content, "\n") + 1;
             return '新文件 · ' . $lines . ' 行 · ' . strlen($content) . ' bytes';

@@ -73,4 +73,68 @@ final class ConfirmBrokerTest extends TestCase
         self::assertSame('n', $decision);
         self::assertNull($broker->pendingId());
     }
+
+    public function testWriteFilePreviewShowsDiffForExistingFile(): void
+    {
+        $ws = sys_get_temp_dir() . '/php-agent-broker-' . uniqid();
+        mkdir($ws, 0777, true);
+        file_put_contents($ws . '/a.txt', "line1\nline2\n");
+        $broker = new ConfirmBroker(120.0, $ws);
+        $preview = null;
+        $broker->setEmitter(static function (StreamEvent $e) use ($broker, &$preview): void {
+            $preview = $e->data['preview'];
+            Loop::futureTick(static fn () => $broker->resolve($e->data['id'], 'n'));
+        });
+        Loop::futureTick(static fn () => $broker->request('write_file', ['path' => 'a.txt', 'content' => "line1\nline2-changed\n"]));
+        Loop::run();
+        self::assertStringContainsString('-line2', $preview);
+        self::assertStringContainsString('+line2-changed', $preview);
+        @unlink($ws . '/a.txt');
+        @rmdir($ws);
+    }
+
+    public function testConfirmHookIntegrationDeniesThenAllows(): void
+    {
+        $ws = sys_get_temp_dir() . '/php-agent-broker-int-' . uniqid();
+        mkdir($ws, 0777, true);
+        $registry = (new \PhpAgent\Agent\ToolRegistry())->register(new \PhpAgent\Tools\WriteFileTool($ws));
+        $broker = new ConfirmBroker(120.0, $ws);
+
+        // 第一次拒绝，第二次同意
+        $answers = ['n', 'y'];
+        $i = 0;
+        $broker->setEmitter(static function (StreamEvent $e) use ($broker, &$answers, &$i): void {
+            $a = $answers[$i++] ?? 'n';
+            Loop::futureTick(static fn () => $broker->resolve($e->data['id'], $a));
+        });
+        $hook = new \PhpAgent\Hook\ConfirmHook(static fn (string $t, array $in): string => $broker->request($t, $in), $registry);
+
+        $script = [
+            [
+                \PhpAgent\LLM\StreamEvent::toolStart('t1', 'write_file'),
+                \PhpAgent\LLM\StreamEvent::toolEnd('t1', 'write_file', ['path' => 'x.txt', 'content' => 'hi']),
+                \PhpAgent\LLM\StreamEvent::end('tool_use'),
+            ],
+            [
+                \PhpAgent\LLM\StreamEvent::toolStart('t2', 'write_file'),
+                \PhpAgent\LLM\StreamEvent::toolEnd('t2', 'write_file', ['path' => 'x.txt', 'content' => 'hi']),
+                \PhpAgent\LLM\StreamEvent::end('tool_use'),
+            ],
+            [\PhpAgent\LLM\StreamEvent::text('done'), \PhpAgent\LLM\StreamEvent::end('end_turn')],
+        ];
+        $loop = new \PhpAgent\Agent\AgentLoop(new \PhpAgent\LLM\FakeLLMClient($script), $registry, 'sys', 10, [$hook]);
+
+        $messages = [];
+        $final = null;
+        Loop::futureTick(static function () use ($loop, &$messages, &$final): void {
+            $final = $loop->run($messages, '写文件');
+        });
+        Loop::run();
+
+        self::assertSame('done', $final);
+        self::assertStringStartsWith('DENIED:', $messages[2]['content'][0]['content']);
+        self::assertFileExists($ws . '/x.txt');
+        @unlink($ws . '/x.txt');
+        @rmdir($ws);
+    }
 }
