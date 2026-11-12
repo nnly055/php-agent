@@ -4,10 +4,11 @@ import { Composer } from "./Composer";
 import { useAppStore } from "../../store/useAppStore";
 import { useUiStore } from "../../store/useUiStore";
 
+// Task 14 起后端以对象序列化模型（ModelEntry）：mock 同步为 { name } 形式
 const payload = {
   profiles: [
-    { id: "p-1", name: "DS", provider: "openai", apiKey: "sk-a", baseUrl: "", models: ["deepseek-chat", "deepseek-reasoner"] },
-    { id: "p-2", name: "GLM", provider: "openai", apiKey: "sk-b", baseUrl: "", models: ["glm-4.7"] },
+    { id: "p-1", name: "DS", provider: "openai", apiKey: "sk-a", baseUrl: "", models: [{ name: "deepseek-chat" }, { name: "deepseek-reasoner" }] },
+    { id: "p-2", name: "GLM", provider: "openai", apiKey: "sk-b", baseUrl: "", models: [{ name: "glm-4.7" }] },
   ],
   defaultProfile: "p-1",
   defaultModel: "deepseek-chat",

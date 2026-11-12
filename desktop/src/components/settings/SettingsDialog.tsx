@@ -9,7 +9,7 @@ import {
 } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
+import { Plus, Trash2 } from "lucide-react";
 import { getProfiles, saveProfiles, type Profile, type ProfilesPayload } from "../../lib/tauri";
 import { pushProfiles, testConfig } from "../../lib/api";
 import { useUiStore } from "../../store/useUiStore";
@@ -27,9 +27,9 @@ const newProfileId = () => `p-${Date.now().toString(36)}-${newIdSeq++}`;
 
 const emptyPayload = (): ProfilesPayload => ({ profiles: [], defaultProfile: "", defaultModel: "" });
 
-/** 深拷贝目录：编辑态直接改 profiles 内对象，不能与全局缓存共享引用。defaultModel 恒置空（服务端从不使用） */
+/** 深拷贝目录：编辑态直接改 profiles 内对象，不能与全局缓存共享引用（模型条目逐个展开）。defaultModel 恒置空（服务端从不使用） */
 const clonePayload = (p: ProfilesPayload): ProfilesPayload => ({
-  profiles: p.profiles.map((x) => ({ ...x, models: [...x.models] })),
+  profiles: p.profiles.map((x) => ({ ...x, models: x.models.map((m) => ({ ...m })) })),
   defaultProfile: p.defaultProfile,
   defaultModel: "",
 });
@@ -101,7 +101,7 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
         provider: target.provider,
         apiKey: target.apiKey,
         baseUrl: target.baseUrl,
-        model: target.models[0] ?? "",
+        model: target.models[0]?.name ?? "",
       });
       setResult({ ok: r.ok, message: r.ok ? `连接成功（${r.latency_ms}ms）` : r.message });
     } catch (e: any) {
@@ -114,7 +114,7 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
 
   async function save() {
     if (!draft) return;
-    // 丢弃未完成条目（无 id 或名称为空），空模型行一并过滤；至少保留一个完整平台
+    // 丢弃未完成平台（无 id 或名称为空），名称为空的模型行一并过滤；至少保留一个完整平台
     const valid = draft.profiles.filter((p) => p.id && p.name.trim());
     if (valid.length === 0) {
       setResult({ ok: false, message: "至少需要保留一个完整平台（名称不能为空）" });
@@ -124,7 +124,8 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
       profiles: valid.map((p) => ({
         ...p,
         name: p.name.trim(),
-        models: p.models.map((m) => m.trim()).filter(Boolean),
+        // contextTokens/maxTokens 在输入时已归一为 number|null，此处仅清洗名称并丢弃空名行
+        models: p.models.map((m) => ({ ...m, name: m.name.trim() })).filter((m) => m.name),
       })),
       defaultProfile: valid.some((p) => p.id === draft.defaultProfile) ? draft.defaultProfile : valid[0].id,
       // defaultModel 恒传空串：服务端从不使用全局默认模型，模型回落 profile 首个（避免显示≠实际）
@@ -218,15 +219,68 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
                     className="font-mono"
                   />
                 </label>
-                <label className="block space-y-1">
-                  <span className="text-sm text-muted">模型（一行一个，首个为默认）</span>
-                  <Textarea
-                    value={p.models.join("\n")}
-                    placeholder={"deepseek-chat\ndeepseek-reasoner"}
-                    onChange={(e) => updateProfile(i, { models: e.target.value.split("\n") })}
-                    className="font-mono"
-                  />
-                </label>
+                {/* 模型动态条目列表：每行 = 名称 + 上下文 + 输出上限 + 删除；空名行保存时被过滤 */}
+                <div className="space-y-1">
+                  <span className="text-sm text-muted">模型（首个为默认）</span>
+                  {p.models.map((m, mi) => (
+                    <div key={mi} className="flex items-center gap-2">
+                      <Input
+                        value={m.name}
+                        placeholder="模型名，如 deepseek-chat"
+                        className="flex-1 font-mono"
+                        onChange={(e) =>
+                          updateProfile(i, {
+                            models: p.models.map((mm, mmi) => (mmi === mi ? { ...mm, name: e.target.value } : mm)),
+                          })
+                        }
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        value={m.contextTokens ?? ""}
+                        placeholder="上下文 128000"
+                        className="w-28"
+                        onChange={(e) =>
+                          updateProfile(i, {
+                            models: p.models.map((mm, mmi) =>
+                              mmi === mi ? { ...mm, contextTokens: e.target.value === "" ? null : Number(e.target.value) } : mm,
+                            ),
+                          })
+                        }
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        value={m.maxTokens ?? ""}
+                        placeholder="输出默认"
+                        className="w-28"
+                        onChange={(e) =>
+                          updateProfile(i, {
+                            models: p.models.map((mm, mmi) =>
+                              mmi === mi ? { ...mm, maxTokens: e.target.value === "" ? null : Number(e.target.value) } : mm,
+                            ),
+                          })
+                        }
+                      />
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label="删除模型"
+                        title="删除模型"
+                        onClick={() => updateProfile(i, { models: p.models.filter((_, fmi) => fmi !== mi) })}
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => updateProfile(i, { models: [...p.models, { name: "", contextTokens: null, maxTokens: null }] })}
+                  >
+                    <Plus size={14} /> 添加模型
+                  </Button>
+                </div>
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-1 text-sm text-ink">
                     <input

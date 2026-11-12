@@ -18,8 +18,9 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onA
   const activeId = selection.profileId ?? profilesPayload?.defaultProfile ?? "";
   const activeProfile = profiles.find((p) => p.id === activeId);
   // 当前模型：会话选择 > 当前平台首个（defaultModel 不参与：服务端从不使用，显示≠实际会谎报）
-  const currentModel = selection.model ?? activeProfile?.models[0] ?? "";
-  const models = activeProfile?.models ?? [];
+  // 模型条目为对象（ModelEntry）：下拉只消费 name 字符串
+  const currentModel = selection.model ?? activeProfile?.models[0]?.name ?? "";
+  const models = activeProfile?.models.map((m) => m.name) ?? [];
   const modelTemp = currentModel !== "" && !models.includes(currentModel);
   // 平台同样兜底：selection 指向的档不在目录（如被删除）时插入临时 option 防空白
   const platformTemp = activeId !== "" && !profiles.some((p) => p.id === activeId);
@@ -46,8 +47,8 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onA
               value={activeId}
               onChange={(e) => {
                 const id = e.target.value;
-                // 切平台回落该档首个模型，避免带着别的平台的模型名发请求
-                const first = profiles.find((p) => p.id === id)?.models[0] ?? null;
+                // 切平台回落该档首个模型名，避免带着别的平台的模型名发请求
+                const first = profiles.find((p) => p.id === id)?.models[0]?.name ?? null;
                 setSelection({ profileId: id, model: first });
               }}
               className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-ink outline-none transition-colors focus:border-primary"

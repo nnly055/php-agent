@@ -37,8 +37,8 @@ describe("TitleBar 配置入口", () => {
   it("有目录且当前会话有选择时，徽章显示 档名▸所选模型", () => {
     useUiStore.getState().setProfilesPayload({
       profiles: [
-        { id: "p-1", name: "OpenAI", provider: "openai", apiKey: "", baseUrl: "", models: ["gpt-4o"] },
-        { id: "p-2", name: "GLM", provider: "zhipu", apiKey: "", baseUrl: "", models: ["glm-4.6", "glm-4.7"] },
+        { id: "p-1", name: "OpenAI", provider: "openai", apiKey: "", baseUrl: "", models: [{ name: "gpt-4o" }] },
+        { id: "p-2", name: "GLM", provider: "zhipu", apiKey: "", baseUrl: "", models: [{ name: "glm-4.6" }, { name: "glm-4.7" }] },
       ],
       defaultProfile: "p-1",
       defaultModel: "gpt-4o",
@@ -52,8 +52,8 @@ describe("TitleBar 配置入口", () => {
     // defaultModel ≠ 默认档首个模型：服务端从不使用 defaultModel，显示它就是谎报
     useUiStore.getState().setProfilesPayload({
       profiles: [
-        { id: "p-1", name: "OpenAI", provider: "openai", apiKey: "", baseUrl: "", models: ["gpt-4o"] },
-        { id: "p-2", name: "GLM", provider: "zhipu", apiKey: "", baseUrl: "", models: ["glm-4.6"] },
+        { id: "p-1", name: "OpenAI", provider: "openai", apiKey: "", baseUrl: "", models: [{ name: "gpt-4o" }] },
+        { id: "p-2", name: "GLM", provider: "zhipu", apiKey: "", baseUrl: "", models: [{ name: "glm-4.6" }] },
       ],
       defaultProfile: "p-1",
       defaultModel: "wrong-default",

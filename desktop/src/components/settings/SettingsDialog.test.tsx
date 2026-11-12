@@ -8,7 +8,7 @@ import * as api from "../../lib/api";
 
 vi.mock("../../lib/tauri", () => ({
   getProfiles: vi.fn().mockResolvedValue({
-    profiles: [{ id: "p-1", name: "DS", provider: "openai", apiKey: "sk-old", baseUrl: "https://api.deepseek.com", models: ["deepseek-chat"] }],
+    profiles: [{ id: "p-1", name: "DS", provider: "openai", apiKey: "sk-old", baseUrl: "https://api.deepseek.com", models: [{ name: "deepseek-chat" }] }],
     defaultProfile: "p-1", defaultModel: "deepseek-chat",
   }),
   saveProfiles: vi.fn().mockResolvedValue(undefined),
@@ -28,12 +28,15 @@ describe("SettingsDialog 平台管理", () => {
     useAppStore.getState().reset();
   });
 
-  it("回填目录并渲染平台列表", async () => {
+  it("回填目录并渲染平台列表（模型条目行）", async () => {
     useUiStore.getState().setSettingsOpen(true);
     render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
     await waitFor(() => expect(screen.getByDisplayValue("DS")).toBeInTheDocument());
-    // 模型列表 textarea 回填该平台的模型
-    expect(screen.getByRole("textbox", { name: /一行一个/ })).toHaveDisplayValue("deepseek-chat");
+    // 模型条目行：名称输入框回填该平台的首个模型（对象形式的 name 字段）
+    expect(screen.getByPlaceholderText(/模型名，如/)).toHaveDisplayValue("deepseek-chat");
+    // contextTokens / maxTokens 数值输入框存在且为空（mock 未提供）
+    expect(screen.getByPlaceholderText(/上下文/)).toHaveDisplayValue("");
+    expect(screen.getByPlaceholderText(/输出默认/)).toHaveDisplayValue("");
     // 全局 defaultModel 旋钮已移除（服务端从不使用；输入框不再渲染）
     expect(screen.queryByRole("textbox", { name: /默认模型/ })).not.toBeInTheDocument();
     // 单平台：默认 radio 勾选，删除按钮禁用（至少保留一个平台）
@@ -41,20 +44,75 @@ describe("SettingsDialog 平台管理", () => {
     expect(screen.getByRole("button", { name: "删除" })).toBeDisabled();
   });
 
-  it("编辑模型行并保存：saveProfiles + pushProfiles，无 restart", async () => {
+  it("编辑模型条目名称并保存：saveProfiles + pushProfiles，无 restart", async () => {
     useUiStore.getState().setSettingsOpen(true);
     render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
     await screen.findByDisplayValue("DS");
-    const modelInput = screen.getByRole("textbox", { name: /一行一个/ });
-    fireEvent.change(modelInput, { target: { value: "deepseek-reasoner" } });
+    const nameInput = screen.getByPlaceholderText(/模型名，如/);
+    fireEvent.change(nameInput, { target: { value: "deepseek-reasoner" } });
     fireEvent.click(screen.getByText("保存"));
     await waitFor(() => expect(tauri.saveProfiles).toHaveBeenCalled());
     const arg = (tauri.saveProfiles as any).mock.calls[0][0];
-    expect(arg.profiles[0].models).toEqual(["deepseek-reasoner"]);
+    expect(arg.profiles[0].models).toEqual([{ name: "deepseek-reasoner" }]);
     // defaultModel 恒传空串：全局旋钮已移除，模型回落 profile 首个
     expect(arg.defaultModel).toBe("");
     expect(api.pushProfiles).toHaveBeenCalledWith("http://127.0.0.1:1", expect.objectContaining({ defaultProfile: "p-1" }));
     expect((tauri as any).restartSession).not.toHaveBeenCalled();
+  });
+
+  it("添加模型：条目行数 +1，新行为空名（保存时被过滤）", async () => {
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
+    await screen.findByDisplayValue("DS");
+    expect(screen.getAllByPlaceholderText(/模型名，如/)).toHaveLength(1);
+    fireEvent.click(screen.getByText("添加模型"));
+    await waitFor(() => expect(screen.getAllByPlaceholderText(/模型名，如/)).toHaveLength(2));
+    // 新行：名称/上下文/输出均为空
+    const nameInputs = screen.getAllByPlaceholderText(/模型名，如/);
+    expect(nameInputs[1]).toHaveDisplayValue("");
+    expect(screen.getAllByPlaceholderText(/上下文/)[1]).toHaveDisplayValue("");
+    expect(screen.getAllByPlaceholderText(/输出默认/)[1]).toHaveDisplayValue("");
+    // 空名行在保存组装时被过滤，payload 只含原条目
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(tauri.saveProfiles).toHaveBeenCalled());
+    const arg = (tauri.saveProfiles as any).mock.calls[0][0];
+    expect(arg.profiles[0].models).toHaveLength(1);
+  });
+
+  it("删除模型：移除对应条目行", async () => {
+    useUiStore.getState().setProfilesPayload({
+      profiles: [{ id: "p-1", name: "DS", provider: "openai", apiKey: "sk-old", baseUrl: "", models: [{ name: "m-1" }, { name: "m-2" }] }],
+      defaultProfile: "p-1", defaultModel: "",
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} />);
+    await waitFor(() => expect(screen.getAllByPlaceholderText(/模型名，如/)).toHaveLength(2));
+    expect(screen.getAllByPlaceholderText(/模型名，如/)[0]).toHaveDisplayValue("m-1");
+    // 删除第一行（m-1），剩余 m-2
+    fireEvent.click(screen.getAllByRole("button", { name: "删除模型" })[0]);
+    await waitFor(() => expect(screen.getAllByPlaceholderText(/模型名，如/)).toHaveLength(1));
+    expect(screen.getByPlaceholderText(/模型名，如/)).toHaveDisplayValue("m-2");
+  });
+
+  it("contextTokens 往返：填 128000 保存后为 128000，清空保存后为 null", async () => {
+    // 推送失败让对话框保持打开（既有行为），两次保存都在同一编辑态内完成
+    (api.pushProfiles as any).mockRejectedValue("push fail");
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
+    await screen.findByDisplayValue("DS");
+    const ctxInput = screen.getByPlaceholderText(/上下文/);
+    fireEvent.change(ctxInput, { target: { value: "128000" } });
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(tauri.saveProfiles).toHaveBeenCalled());
+    let arg = (tauri.saveProfiles as any).mock.calls[0][0];
+    expect(arg.profiles[0].models[0].contextTokens).toBe(128000);
+
+    // 清空 → null（未设置，由后端回落默认）
+    fireEvent.change(screen.getByPlaceholderText(/上下文/), { target: { value: "" } });
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect((tauri.saveProfiles as any).mock.calls.length).toBeGreaterThanOrEqual(2));
+    arg = (tauri.saveProfiles as any).mock.calls.at(-1)[0];
+    expect(arg.profiles[0].models[0].contextTokens).toBeNull();
   });
 
   it("添加平台产生第二个条目并成为可选项", async () => {
@@ -76,15 +134,18 @@ describe("SettingsDialog 平台管理", () => {
     await waitFor(() => expect(btn).toBeEnabled());
     fireEvent.click(btn);
     await waitFor(() => expect(screen.getByText(/连接成功（88ms）/)).toBeInTheDocument());
-    expect(api.testConfig).toHaveBeenCalledWith("http://127.0.0.1:1", expect.objectContaining({ apiKey: "sk-old" }));
+    expect(api.testConfig).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      expect.objectContaining({ apiKey: "sk-old", model: "deepseek-chat" }),
+    );
   });
 
   it("默认档指向第二个平台时，测试连接用第二个平台的值", async () => {
     (api.testConfig as any).mockResolvedValue({ ok: true, message: "连接成功", latency_ms: 66 });
     useUiStore.getState().setProfilesPayload({
       profiles: [
-        { id: "p-1", name: "DS", provider: "openai", apiKey: "sk-first", baseUrl: "https://first.example", models: ["m1"] },
-        { id: "p-2", name: "GLM", provider: "openai", apiKey: "sk-second", baseUrl: "https://second.example", models: ["m2"] },
+        { id: "p-1", name: "DS", provider: "openai", apiKey: "sk-first", baseUrl: "https://first.example", models: [{ name: "m1" }] },
+        { id: "p-2", name: "GLM", provider: "openai", apiKey: "sk-second", baseUrl: "https://second.example", models: [{ name: "m2" }] },
       ],
       defaultProfile: "p-2",
       defaultModel: "",
@@ -111,7 +172,7 @@ describe("SettingsDialog 平台管理", () => {
 
   it("优先使用 profilesPayload 缓存回填，不调 getProfiles", async () => {
     useUiStore.getState().setProfilesPayload({
-      profiles: [{ id: "cached", name: "缓存平台", provider: "anthropic", apiKey: "sk-cache", baseUrl: "https://cached.example", models: ["m-cached"] }],
+      profiles: [{ id: "cached", name: "缓存平台", provider: "anthropic", apiKey: "sk-cache", baseUrl: "https://cached.example", models: [{ name: "m-cached" }] }],
       defaultProfile: "cached", defaultModel: "m-cached",
     });
     useUiStore.getState().setSettingsOpen(true);
