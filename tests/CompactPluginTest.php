@@ -192,17 +192,19 @@ final class CompactPluginTest extends TestCase
      * 跟随分支真实注册路径：无注入工厂，插件自行装配（生产装配形态）。
      * AGENT_PROVIDER=fake 供 provider 回落；AGENT_COMPACT_PROVIDER 置空确保走跟随分支。
      * 注意插件注册先于 registry 挂载（bin/server 时序），工厂必须把 registry 查找推迟到压缩时刻。
+     * $wrapClient 可选：包一层装饰 client（如记录摘要请求调用），验证压缩请求流经的 client 行为。
      */
-    private function followModeKernel(int $globalContextTokens): AgentKernel
+    private function followModeKernel(int $globalContextTokens, ?\Closure $wrapClient = null): AgentKernel
     {
         putenv('AGENT_WORKSPACE=' . sys_get_temp_dir());
         putenv('AGENT_PROVIDER=fake');
         putenv('AGENT_COMPACT_PROVIDER=');
         putenv("AGENT_CONTEXT_TOKENS={$globalContextTokens}");
         $kernel = new AgentKernel(\PhpAgent\Config::load(sys_get_temp_dir()));
-        $kernel->registerProvider('fake', static fn (): \PhpAgent\LLM\LLMClient => new FakeLLMClient([
-            [StreamEvent::text('早期完成了若干任务。'), StreamEvent::end('end_turn')],
-        ]));
+        $kernel->registerProvider('fake', static function () use ($wrapClient): \PhpAgent\LLM\LLMClient {
+            $fake = new FakeLLMClient([[StreamEvent::text('早期完成了若干任务。'), StreamEvent::end('end_turn')]]);
+            return $wrapClient !== null ? $wrapClient($fake) : $fake;
+        });
         (new CompactPlugin())->register($kernel);
         return $kernel;
     }
@@ -262,5 +264,57 @@ final class CompactPluginTest extends TestCase
 
         self::assertCount(3, $messages);
         self::assertCount(1, $notes);
+    }
+
+    public function testFollowModeCompactionFollowsModelSwitchAcrossEvents(): void
+    {
+        // 事件 1（未达阈值，工厂被调用但不压缩）后 per-turn 切换模型 → 事件 2 即用新条目压缩。
+        // 修复前 CompactHook 以 ??= 记忆化工厂结果：事件 2 仍用事件 1 冻结的 contextTokens（全局 1000000）→ 不压缩。
+        $calls = 0;
+        $onStream = static function () use (&$calls): void { $calls++; };
+        $kernel = $this->followModeKernel(1_000_000, static function (\PhpAgent\LLM\LLMClient $inner) use ($onStream): \PhpAgent\LLM\LLMClient {
+            // 装饰 client：记录摘要请求调用（registry 的 fake 分支解析到 kernel 同一 provider 实例，
+            // 两条目共享实例不可区分，故以「调用日志」区分 client 是否在切换后才被首次使用）
+            return new class($inner, $onStream) implements \PhpAgent\LLM\LLMClient {
+                public function __construct(
+                    private readonly \PhpAgent\LLM\LLMClient $inner,
+                    private readonly \Closure $onStream,
+                ) {
+                }
+
+                public function stream(array $messages, array $tools, string $system): \Generator
+                {
+                    ($this->onStream)();
+                    yield from $this->inner->stream($messages, $tools, $system);
+                }
+            };
+        });
+        $registry = new ProfileRegistry($kernel);
+        $kernel->setProfileRegistry($registry);
+        $registry->setProfiles([
+            ['id' => 'p1', 'name' => '平台一', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '',
+                'models' => [['name' => 'm1'], ['name' => 'm2', 'contextTokens' => 500]]],
+        ], 'p1');
+        $registry->setActiveClient($registry->resolve('p1', 'm1')); // 事件 1 生效：m1 无条目参数 → 回落全局 1000000
+
+        $messages = $this->bigHistory();
+        $notes = [];
+        $this->fireBeforeLlm($kernel, $messages, $notes);
+        self::assertCount(9, $messages, '全局 1000000 阈值下事件 1 不压缩');
+        self::assertSame([], $notes);
+        self::assertSame(0, $calls, '未压缩则摘要请求不发出');
+
+        // per-turn 切换：resolve 另一条目（contextTokens=500）+ setActiveClient（镜像 AgentServer 接线）
+        $m2Client = $registry->resolve('p1', 'm2');
+        $registry->setActiveClient($m2Client);
+        self::assertSame(500, $registry->activeContextTokens());
+
+        $this->fireBeforeLlm($kernel, $messages, $notes);
+        // 事件 2 重新求值 → 500×0.8=400 ≤ 估算 1407 触发压缩；阈值跟随新条目即证明工厂每事件重新解析
+        self::assertCount(3, $messages);
+        self::assertStringContainsString('<context-summary>', $messages[0]['content'][0]['text']);
+        self::assertCount(1, $notes);
+        self::assertSame(1, $calls, '摘要请求恰一次，且发生在切换之后');
+        self::assertSame($m2Client, $registry->activeClient(), '生效 client 已切换为新条目解析结果');
     }
 }
