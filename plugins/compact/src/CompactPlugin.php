@@ -52,20 +52,14 @@ final class CompactPlugin implements Plugin
                     $threshold,
                 );
             } else {
-                // 未显式指定压缩 provider：跟随当前对话生效的 profile client（per-turn 切换后压缩同源）
-                $registry = $kernel->profileRegistry();
+                // 未显式指定压缩 provider：跟随当前对话生效的 profile client（per-turn 切换后压缩同源）。
+                // registry 查找同样推迟到压缩时刻：bin/server 在插件注册之后才挂载 registry，register 时必为 null
                 $fallbackId = $config->provider();
-                $factory = $registry !== null
-                    ? static fn (): Compactor => new Compactor(
-                        $registry->activeClient() ?? $kernel->provider($fallbackId),
-                        $contextTokens,
-                        $threshold,
-                    )
-                    : static fn (): Compactor => new Compactor(
-                        $kernel->provider($fallbackId),
-                        $contextTokens,
-                        $threshold,
-                    );
+                $factory = static fn (): Compactor => new Compactor(
+                    $kernel->profileRegistry()?->activeClient() ?? $kernel->provider($fallbackId),
+                    $contextTokens,
+                    $threshold,
+                );
             }
         }
 
