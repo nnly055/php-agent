@@ -1,6 +1,6 @@
 pub mod sidecar;
 
-use sidecar::{project_slug, Sidecar};
+use sidecar::{project_slug, Sidecar, SidecarConfig};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -44,6 +44,9 @@ struct PersistedState {
     // 兼容 v0.3.0 旧格式（单 workspace 字段迁移为 projects[0]）
     #[serde(default)]
     workspace: Option<String>,
+    /// 全局 API 配置（v0.5.0+）；旧文件无此字段 → None
+    #[serde(default)]
+    config: Option<SidecarConfig>,
 }
 
 fn load_state() -> PersistedState {
@@ -63,20 +66,30 @@ fn load_state() -> PersistedState {
     st
 }
 
-fn save_state(projects: &[String], last_session: &str, last_workspace: &str) {
+fn save_state_full(st: &PersistedState) {
     let path = desktop_json_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(
-        &path,
-        serde_json::json!({
-            "projects": projects,
-            "last_session": last_session,
-            "last_workspace": if last_workspace.is_empty() { serde_json::Value::Null } else { serde_json::json!(last_workspace) },
-        })
-        .to_string(),
-    );
+    let text = serde_json::json!({
+        "projects": st.projects,
+        "last_session": st.last_session,
+        "last_workspace": st.last_workspace.as_ref().filter(|s| !s.is_empty()),
+        "config": st.config,
+    })
+    .to_string();
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::File::create(&path) {
+            let _ = f.write_all(text.as_bytes());
+            // 含 api key：权限收紧到 0600
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = std::fs::write(&path, text);
 }
 
 /// 每项目独立的会话存储目录：~/.php-agent/projects/<slug>/sessions
@@ -146,7 +159,10 @@ fn open_session_inner(
                 let port = running.sidecar.port();
                 let mut last = state.last_session.lock().unwrap();
                 *last = id.clone();
-                save_state(&state.projects.lock().unwrap(), &last, workspace);
+                let mut st = load_state();
+                st.last_session = id.clone();
+                st.last_workspace = Some(workspace.to_string());
+                save_state_full(&st);
                 let _ = app.emit(
                     "backend://ready",
                     serde_json::json!({ "sessionId": id, "port": port, "workspace": workspace }),
@@ -156,6 +172,7 @@ fn open_session_inner(
         }
     }
 
+    let global_cfg = load_state().config;
     let session_id = session_id_now();
     let (php_bin, backend_cwd) = resolve_backend(app);
     match Sidecar::start_with_env(
@@ -163,7 +180,7 @@ fn open_session_inner(
         &backend_cwd,
         workspace,
         Some(&session_dir.to_string_lossy()),
-        None, // TODO(Task 4): 接入全局配置 global_cfg.as_ref()
+        global_cfg.as_ref(),
     ) {
         Ok(sc) => {
             let port = sc.port();
@@ -171,14 +188,22 @@ fn open_session_inner(
                 session_id.clone(),
                 RunningSession { sidecar: sc, workspace: workspace.to_string() },
             );
-            state.projects.lock().unwrap().iter().position(|p| p == workspace)
-                .unwrap_or_else(|| {
-                    state.projects.lock().unwrap().push(workspace.to_string());
-                    state.projects.lock().unwrap().len() - 1
-                });
-            let mut last = state.last_session.lock().unwrap();
-            *last = session_id.clone();
-            save_state(&state.projects.lock().unwrap(), &last, workspace);
+            // 内存 projects 列表同步（原 position(...).unwrap_or_else(...) 块的等价改写）
+            {
+                let mut projects = state.projects.lock().unwrap();
+                if !projects.iter().any(|p| p == workspace) {
+                    projects.push(workspace.to_string());
+                }
+            }
+            *state.last_session.lock().unwrap() = session_id.clone();
+            // 持久化（含 config 字段）
+            let mut st = load_state();
+            if !st.projects.iter().any(|p| p == workspace) {
+                st.projects.push(workspace.to_string());
+            }
+            st.last_session = session_id.clone();
+            st.last_workspace = Some(workspace.to_string());
+            save_state_full(&st);
             let _ = app.emit(
                 "backend://ready",
                 serde_json::json!({ "sessionId": session_id, "port": port, "workspace": workspace }),
@@ -265,8 +290,13 @@ async fn add_project(app: tauri::AppHandle) -> Result<Option<serde_json::Value>,
         if !projects.iter().any(|p| p == &path) {
             projects.push(path.clone());
         }
-        let last = state.last_session.lock().unwrap().clone();
-        save_state(&projects, &last, &path);
+        let mut st = load_state();
+        if !st.projects.iter().any(|p| p == &path) {
+            st.projects.push(path.clone());
+        }
+        st.last_session = state.last_session.lock().unwrap().clone();
+        st.last_workspace = Some(path.clone());
+        save_state_full(&st);
     }
 
     let a = app.clone();
@@ -305,11 +335,13 @@ fn remove_project(app: tauri::AppHandle, path: String) -> bool {
     let mut projects = state.projects.lock().unwrap();
     let before = projects.len();
     projects.retain(|p| p != &path);
-    let last = state.last_session.lock().unwrap().clone();
     // 被移除的项目若是最近激活项，清空恢复指针；否则保留
     let prev_ws = load_state().last_workspace.unwrap_or_default();
-    let new_ws = if prev_ws == path { String::new() } else { prev_ws };
-    save_state(&projects, &last, &new_ws);
+    let mut st = load_state();
+    st.projects = projects.clone();
+    st.last_session = state.last_session.lock().unwrap().clone();
+    st.last_workspace = if prev_ws == path { None } else { Some(prev_ws) };
+    save_state_full(&st);
     removed || projects.len() != before
 }
 
@@ -323,6 +355,23 @@ fn get_backend_url(state: State<AppState>, session_id: String) -> Result<String,
 }
 
 #[tauri::command]
+fn get_config() -> SidecarConfig {
+    load_state().config.unwrap_or_else(SidecarConfig::empty)
+}
+
+#[tauri::command]
+fn save_config(provider: String, api_key: String, base_url: String, model: String) -> Result<(), String> {
+    let provider = provider.trim().to_lowercase();
+    if !matches!(provider.as_str(), "openai" | "anthropic" | "fake") {
+        return Err("provider 必须是 openai|anthropic|fake".into());
+    }
+    let mut st = load_state();
+    st.config = Some(SidecarConfig { provider, api_key: api_key.trim().into(), base_url: base_url.trim().into(), model: model.trim().into() });
+    save_state_full(&st);
+    Ok(())
+}
+
+#[tauri::command]
 fn get_workspace(state: State<AppState>, session_id: String) -> Result<String, String> {
     let guard = state.sessions.lock().unwrap();
     guard
@@ -332,7 +381,7 @@ fn get_workspace(state: State<AppState>, session_id: String) -> Result<String, S
 }
 
 #[tauri::command]
-async fn restart_session(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
+async fn restart_session(app: tauri::AppHandle, session_id: String) -> Result<serde_json::Value, String> {
     let workspace = {
         let state = app.state::<AppState>();
         let guard = state.sessions.lock().unwrap();
@@ -343,10 +392,12 @@ async fn restart_session(app: tauri::AppHandle, session_id: String) -> Result<()
     };
     close_session_inner(&app, &session_id);
     let a = app.clone();
-    tauri::async_runtime::spawn_blocking(move || open_session_inner(&a, &workspace))
+    // workspace 需在闭包外用于返回值，先克隆再移交（同 open_project 模式）
+    let ws = workspace.clone();
+    let (new_id, port) = tauri::async_runtime::spawn_blocking(move || open_session_inner(&a, &ws))
         .await
         .map_err(|e| format!("重启 backend 失败: {e}"))??;
-    Ok(())
+    Ok(serde_json::json!({ "sessionId": new_id, "port": port, "workspace": workspace }))
 }
 
 pub fn run() {
@@ -381,7 +432,9 @@ pub fn run() {
             remove_project,
             get_backend_url,
             get_workspace,
-            restart_session
+            restart_session,
+            get_config,
+            save_config
         ])
         .setup(|_app| {
             // SIGINT/SIGTERM（含终端 Ctrl+C）→ 干净退出，杜绝孤儿 php sidecar。
@@ -405,4 +458,27 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_state_parses_config_field() {
+        let st: PersistedState = serde_json::from_str(
+            r#"{"projects":[],"last_session":"","config":{"provider":"openai","apiKey":"sk-1","baseUrl":"https://x/v1","model":"glm-4.7"}}"#,
+        )
+        .unwrap();
+        let cfg = st.config.expect("config 字段应被解析");
+        assert_eq!(cfg.api_key, "sk-1");
+        assert_eq!(cfg.model, "glm-4.7");
+    }
+
+    #[test]
+    fn persisted_state_legacy_without_config_is_none() {
+        let st: PersistedState =
+            serde_json::from_str(r#"{"projects":["/a"],"last_session":"p-1"}"#).unwrap();
+        assert!(st.config.is_none(), "旧格式无 config 字段 → None");
+    }
 }
