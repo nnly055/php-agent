@@ -27,6 +27,8 @@ type State = {
   streamAbort: AbortController | null;
   pendingConfirm: PendingConfirm | null;
   error: string | null;
+  // 本轮对话的平台/模型选择；null 表示沿用全局默认档
+  selection: { profileId: string | null; model: string | null };
 
   setSessionId: (id: string) => void;
   setBackend: (url: string) => void;
@@ -34,6 +36,7 @@ type State = {
   setConnected: (c: boolean) => void;
   setSessions: (s: SessionMeta[]) => void;
   setActiveSession: (id: string, messages?: ChatMessage[]) => void;
+  setSelection: (s: { profileId: string | null; model: string | null }) => void;
   setStreamAbort: (c: AbortController | null) => void;
   setError: (e: string | null) => void;
   beginTurn: (text: string) => void;
@@ -64,6 +67,7 @@ export function createProjectStore() {
     streamAbort: null,
     pendingConfirm: null,
     error: null,
+    selection: { profileId: null, model: null },
 
     setSessionId: (id) => set({ sessionId: id }),
     setBackend: (url) => set({ backendUrl: url }),
@@ -73,8 +77,10 @@ export function createProjectStore() {
     setActiveSession: (id, messages = []) => {
       // 切会话先中止在途流，防止旧会话的流继续 applyEvent 串进新会话的 transcript。
       get().streamAbort?.abort();
-      set({ activeSession: id, messages, streaming: false, streamAbort: null, pendingConfirm: null, error: null });
+      // 切会话同时重置选择为 null：新会话继承全局默认档；持久选择由会话 meta 恢复。
+      set({ activeSession: id, messages, streaming: false, streamAbort: null, pendingConfirm: null, error: null, selection: { profileId: null, model: null } });
     },
+    setSelection: (s) => set({ selection: s }),
     setStreamAbort: (c) => set({ streamAbort: c }),
     setError: (e) => set({ error: e }),
 
@@ -167,6 +173,7 @@ export function createProjectStore() {
       set({
         sessionId: "", backendUrl: "", status: null, connected: false, sessions: [], activeSession: "",
         messages: [], streaming: false, streamAbort: null, pendingConfirm: null, error: null,
+        selection: { profileId: null, model: null },
       });
     },
   }));

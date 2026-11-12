@@ -45,6 +45,10 @@ export function SessionItem({ meta }: { meta: SessionMeta }) {
     try {
       const { messages } = await loadSession(store.getState().backendUrl, meta.id);
       store.getState().setActiveSession(meta.id, toChatMessages(messages));
+      // 恢复该会话落库时的平台/模型选择（meta 来自 /sessions 列表项）
+      if (meta.profileId || meta.model) {
+        store.getState().setSelection({ profileId: meta.profileId ?? null, model: meta.model ?? null });
+      }
     } catch (e: any) {
       store.getState().setError(e?.message ?? "加载会话失败");
     }

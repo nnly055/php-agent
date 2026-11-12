@@ -43,4 +43,25 @@ describe("useAgentStream.answerConfirm", () => {
     expect(useAppStore.getState().sessions.map(s => s.id)).toContain("s-new");
     expect(useAppStore.getState().streaming).toBe(false);
   });
+
+  it("passes the store selection to agentStream as the 5th arg", async () => {
+    (api.agentStream as any).mockImplementationOnce(async function* () {});
+    useAppStore.getState().setActiveSession("s-sel", []);
+    useAppStore.getState().setSelection({ profileId: "p-9", model: "m-9" });
+    const { result } = renderHook(() => useAgentStream());
+    await act(async () => { await result.current.send("带选择发送"); });
+    expect(api.agentStream).toHaveBeenCalledWith(
+      expect.any(String), "带选择发送", "s-sel", expect.any(AbortSignal), { profileId: "p-9", model: "m-9" },
+    );
+  });
+
+  it("selection 默认 { null, null } 也原样透传（wire 由 agentStream 过滤空键）", async () => {
+    (api.agentStream as any).mockImplementationOnce(async function* () {});
+    useAppStore.getState().setActiveSession("s-def", []);
+    const { result } = renderHook(() => useAgentStream());
+    await act(async () => { await result.current.send("默认发送"); });
+    expect(api.agentStream).toHaveBeenLastCalledWith(
+      expect.any(String), "默认发送", "s-def", expect.any(AbortSignal), { profileId: null, model: null },
+    );
+  });
 });

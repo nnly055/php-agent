@@ -16,7 +16,8 @@ export function useAgentStream() {
     // store.streamAbort 为唯一来源：切会话（setActiveSession）会 abort 它防跨会话串数据。
     store.getState().setStreamAbort(ac);
     try {
-      for await (const ev of agentStream(st.backendUrl, text, sessionId, ac.signal)) {
+      // 第 5 参携带本轮平台/模型选择；均缺省时 store 值为 {null,null}，agentStream 不会发送对应键
+      for await (const ev of agentStream(st.backendUrl, text, sessionId, ac.signal, st.selection ?? undefined)) {
         store.getState().applyEvent(ev);
       }
     } catch (e: any) {
