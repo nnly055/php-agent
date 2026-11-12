@@ -23,7 +23,9 @@ jobs:
       matrix:
         include:
           - { os: macos-14, name: macOS-AppleSilicon }
-          - { os: macos-13, name: macOS-Intel }
+          # Intel Mac（macos-13）：免费 runner 池已被 GitHub 基本下线（排队 20min+ 不分配）。
+          # 需要 Intel dmg 时恢复此行，并考虑自托管 runner：
+          # - { os: macos-13, name: macOS-Intel }
           - { os: ubuntu-22.04, name: Linux-x64 }
           - { os: windows-latest, name: Windows-x64 }
     runs-on: ${{ matrix.os }}
