@@ -22,6 +22,14 @@ export type Status = {
 export type SessionMeta = { id: string; title: string; createdAt: number; updatedAt: number; messageCount: number };
 
 export const getStatus = (baseUrl: string, signal?: AbortSignal) => json<Status>(baseUrl, "/status", { signal });
+
+export type ConfigTestResult = { ok: boolean; message: string; latency_ms: number };
+/** POST /config/test：测试连接（桌面设置对话框用；走任意已连接 sidecar 的 baseUrl） */
+export const testConfig = (baseUrl: string, cfg: { provider: string; apiKey: string; baseUrl: string; model: string }) =>
+  json<ConfigTestResult>(baseUrl, "/config/test", {
+    method: "POST",
+    body: JSON.stringify({ provider: cfg.provider, api_key: cfg.apiKey, base_url: cfg.baseUrl, model: cfg.model }),
+  });
 export const listSessions = (baseUrl: string, limit = 50) => json<{ sessions: SessionMeta[] }>(baseUrl, `/sessions?limit=${limit}`);
 export const loadSession = (baseUrl: string, id: string) => json<{ id: string; messages: any[] }>(baseUrl, `/sessions/${encodeURIComponent(id)}`);
 export const deleteSession = (baseUrl: string, id: string) => json<{ ok: boolean }>(baseUrl, `/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });

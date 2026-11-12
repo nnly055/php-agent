@@ -13,7 +13,14 @@ export const closeProject = (sessionId: string) => invoke<boolean>("close_projec
 export const removeProject = (path: string) => invoke<boolean>("remove_project", { path });
 export const getBackendUrl = (sessionId: string) => invoke<string>("get_backend_url", { sessionId });
 export const getWorkspace = (sessionId: string) => invoke<string>("get_workspace", { sessionId });
-export const restartSession = (sessionId: string) => invoke<void>("restart_session", { sessionId });
+export const restartSession = (sessionId: string) =>
+  invoke<OpenedSession>("restart_session", { sessionId });
+
+/** 全局 API 配置（desktop.json 顶层 config 字段；camelCase 与后端序列化对齐） */
+export type AgentConfig = { provider: string; apiKey: string; baseUrl: string; model: string };
+export const getConfig = () => invoke<AgentConfig>("get_config");
+export const saveConfig = (cfg: AgentConfig) =>
+  invoke<void>("save_config", { provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model });
 
 export type BackendEvent =
   | { kind: "ready"; sessionId: string; port: number; workspace: string }
