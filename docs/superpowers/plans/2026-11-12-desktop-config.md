@@ -1286,7 +1286,7 @@ git commit -m "feat: 标题栏徽章与空项目页接入配置入口（未配�
 ## 验收（手工，全部任务完成后）
 
 1. `cd desktop && npm run tauri dev` 启动
-2. 全新状态（删除 `~/.php-agent/desktop.json` 可复现）：标题栏显示橙色 `openai/未配置` → 点击 → 填 GLM/OpenAI 兼容端点 + key + model → 「测试连接」显示 `✓ 连接成功（…ms）` → 保存 → 徽章变 `openai/<model>` 白色
+2. 全新状态（删除 `~/.php-agent/desktop.json` 可复现）：**先添加/打开一个项目目录**（标题栏徽章只在项目工作区内渲染；未打开项目时仅能用空项目页「配置 API」盲存，测试连接需已连接的 sidecar）→ 标题栏显示橙色 `openai/未配置` → 点击 → 填 GLM/OpenAI 兼容端点 + key + model → 「测试连接」显示 `✓ 连接成功（…ms）` → 保存 → 徽章变 `openai/<model>` 白色
 3. 发消息得到真实回复；再次修改 provider → 保存 → 两个已打开项目 tab 均自动重启且会话历史可恢复
 4. 断开 sidecar（kill 进程）→ 重连 → 聊天仍可用（验证重绑修复）
 5. `cat ~/.php-agent/desktop.json`：`config` 字段存在；`ls -l` 权限 `-rw-------`；`/status` 响应无 key
