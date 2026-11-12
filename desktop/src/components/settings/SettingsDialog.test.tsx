@@ -83,6 +83,18 @@ describe("SettingsDialog 平台管理", () => {
     await act(async () => {});
   });
 
+  it("优先使用 profilesPayload 缓存回填，不调 getProfiles", async () => {
+    useUiStore.getState().setProfilesPayload({
+      profiles: [{ id: "cached", name: "缓存平台", provider: "anthropic", apiKey: "sk-cache", baseUrl: "https://cached.example", models: ["m-cached"] }],
+      defaultProfile: "cached", defaultModel: "m-cached",
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
+    await waitFor(() => expect(screen.getByDisplayValue("缓存平台")).toBeInTheDocument());
+    expect(screen.getByDisplayValue("sk-cache")).toBeInTheDocument();
+    expect(tauri.getProfiles).not.toHaveBeenCalled();
+  });
+
   it("删除平台后仅剩一个条目，删除按钮再次禁用", async () => {
     useUiStore.getState().setSettingsOpen(true);
     render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
