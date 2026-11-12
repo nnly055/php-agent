@@ -8,7 +8,6 @@ use PhpAgent\Agent\AgentLoop;
 use PhpAgent\Config;
 use PhpAgent\Hook\HookPipeline;
 use PhpAgent\LLM\AnthropicClient;
-use PhpAgent\LLM\LLMException;
 use PhpAgent\LLM\OpenAICompatClient;
 use PhpAgent\LLM\StreamEvent;
 use PhpAgent\Session\SessionStore;
@@ -186,10 +185,17 @@ final class AgentServer
         if (!in_array($provider, ['openai', 'anthropic', 'fake'], true)) {
             return $this->json(400, ['error' => 'provider 必须是 openai|anthropic|fake']);
         }
+        // base_url 仅允许 http(s)：桌面端任意网页可跨源探测本地随机端口的 HTTP 服务，
+        // 若放行 file://、gopher:// 等任意 scheme，会把 /config/test 变成出站请求原语
+        // （HTTP 错误信息还会把上游响应体片段回传给调用方）。空串保留 = provider 默认端点。
+        $baseUrl = trim((string) ($body['base_url'] ?? ''));
+        if ($baseUrl !== '' && !str_starts_with($baseUrl, 'http://') && !str_starts_with($baseUrl, 'https://')) {
+            return $this->json(400, ['error' => 'base_url 必须以 http:// 或 https:// 开头']);
+        }
         $tmp = Config::fromArray([
             'AGENT_PROVIDER' => $provider,
             'AGENT_API_KEY' => trim((string) ($body['api_key'] ?? '')),
-            'AGENT_BASE_URL' => trim((string) ($body['base_url'] ?? '')),
+            'AGENT_BASE_URL' => $baseUrl,
             'AGENT_MODEL' => trim((string) ($body['model'] ?? '')),
             // maxTokens 下限 1024：压低默认 8192，控制 ping 成本
             'AGENT_MAX_TOKENS' => '16',

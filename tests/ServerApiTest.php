@@ -130,4 +130,14 @@ final class ServerApiTest extends TestCase
         self::assertFalse($body['ok']);
         self::assertStringContainsString('模型', $body['message']);
     }
+
+    public function testConfigTestRejectsNonHttpBaseUrl(): void
+    {
+        $resp = $this->server()->handle(new ServerRequest('POST', 'http://localhost/config/test', [], json_encode([
+            'provider' => 'openai', 'api_key' => 'sk-x', 'base_url' => 'file:///etc/passwd',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(400, $resp->getStatusCode());
+        $body = json_decode((string) $resp->getBody(), true);
+        self::assertStringContainsString('base_url', $body['error']);
+    }
 }
