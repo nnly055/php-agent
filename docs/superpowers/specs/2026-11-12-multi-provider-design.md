@@ -192,8 +192,8 @@ pub profiles: Vec<ProfileConfig>, default_profile: Option<String>, default_model
 
 | 参数 | 留空时 | 生效点 |
 |---|---|---|
-| `contextTokens`（上下文窗口） | 内置默认 128000 | 自动压缩阈值跟随当前对话模型（Registry 记录最近解析的 profile+model，暴露 `activeContextTokens()`；CompactPlugin 跟随闭包在压缩时刻读取，未解析/未设置回落全局值） |
-| `maxTokens`（单次输出上限） | 现状（Anthropic 8192 协议必传；openai 兼容端点不发送） | Anthropic 必传值改用之；openai 兼容端点**仅在显式设置时**发送 `max_tokens`（`Config::maxTokensExplicit()` 判定，不改变未设置端点行为） |
+| `contextTokens`（上下文窗口） | 内置默认 128000 | 自动压缩阈值跟随当前对话模型（Registry 记录最近解析的 profile+model，暴露 `activeContextTokens()`；CompactHook 每次压缩事件经工厂实时解析，未解析/未设置回落全局值） |
+| `maxTokens`（单次输出上限） | 现状（Anthropic 8192 协议必传；openai 兼容端点不发送） | Anthropic 必传值改用之；openai 兼容端点**仅在显式设置时**发送 `max_tokens`（`Config::maxTokensExplicit()` 判定）。**下限 1024**（内核 max(1024,…) 既有语义）：PHP setProfiles 显式校验 <1024 报错 + FE 输入 min=1024 且保存前置校验，三层一致杜绝静默抬高 |
 
 - 对话内切换仍按**模型名**选择（selection 语义不变）；resolve 按名定位条目取参数
 - UI：设置页平台卡片内模型区改为动态条目列表（名称 + 两个可选数字输入 + 删除 + 添加模型）
