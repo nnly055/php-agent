@@ -33,6 +33,19 @@ fn desktop_json_path() -> PathBuf {
     PathBuf::from(home_dir()).join(".php-agent").join("desktop.json")
 }
 
+/// 一个平台档：name 供 UI 显示；models 为该平台可选模型列表（首个为默认）
+// Default 手写与 derive 等价（空串/空 vec），derive 以满足 clippy::derivable_impls
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProfileConfig {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub api_key: String,
+    pub base_url: String,
+    pub models: Vec<String>,
+}
+
 #[derive(serde::Deserialize, Default)]
 struct PersistedState {
     #[serde(default)]
@@ -44,9 +57,39 @@ struct PersistedState {
     // 兼容 v0.3.0 旧格式（单 workspace 字段迁移为 projects[0]）
     #[serde(default)]
     workspace: Option<String>,
-    /// 全局 API 配置（v0.5.0+）；旧文件无此字段 → None
+    /// 旧单档全局配置：仅保留解析能力以供 migrate_legacy 迁移，不再写盘
     #[serde(default)]
     config: Option<SidecarConfig>,
+    /// 平台档目录（schema v2，v0.6.0+）；旧文件无此字段 → 空
+    #[serde(default)]
+    profiles: Vec<ProfileConfig>,
+    // 顶层键沿用 camelCase（与 save_state_full 写盘键一致；旧顶层键其余仍为 snake_case）
+    #[serde(default, rename = "defaultProfile")]
+    default_profile: Option<String>,
+    #[serde(default, rename = "defaultModel")]
+    default_model: Option<String>,
+}
+
+/// 旧单档 config → profiles[default]（无损迁移；无 config 则保持空）
+fn migrate_legacy(mut st: PersistedState) -> PersistedState {
+    if st.profiles.is_empty() {
+        if let Some(cfg) = st.config.take() {
+            if !cfg.provider.is_empty() {
+                let mut models = Vec::new();
+                if !cfg.model.is_empty() {
+                    models.push(cfg.model.clone());
+                }
+                st.profiles.push(ProfileConfig {
+                    id: "default".into(), name: cfg.provider.clone(),
+                    provider: cfg.provider.clone(), api_key: cfg.api_key.clone(),
+                    base_url: cfg.base_url.clone(), models,
+                });
+                st.default_profile = Some("default".into());
+                st.default_model = if cfg.model.is_empty() { None } else { Some(cfg.model) };
+            }
+        }
+    }
+    st
 }
 
 fn load_state() -> PersistedState {
@@ -63,7 +106,8 @@ fn load_state() -> PersistedState {
         }
     }
     st.projects.retain(|p| std::path::Path::new(p).is_dir());
-    st
+    // 旧单档 config → profiles 迁移（幂等：已有 profiles 则原样返回）
+    migrate_legacy(st)
 }
 
 fn save_state_full(st: &PersistedState) {
@@ -75,7 +119,9 @@ fn save_state_full(st: &PersistedState) {
         "projects": st.projects,
         "last_session": st.last_session,
         "last_workspace": st.last_workspace.as_ref().filter(|s| !s.is_empty()),
-        "config": st.config,
+        "profiles": st.profiles,
+        "defaultProfile": st.default_profile,
+        "defaultModel": st.default_model,
     })
     .to_string();
     #[cfg(unix)]
@@ -196,7 +242,7 @@ fn open_session_inner(
         }
     }
 
-    let global_cfg = load_state().config;
+    let global_cfg = default_sidecar_config(&load_state());
     let session_id = session_id_now();
     let (php_bin, backend_cwd) = resolve_backend(app);
     match Sidecar::start_with_env(
@@ -220,7 +266,7 @@ fn open_session_inner(
                 }
             }
             *state.last_session.lock().unwrap() = session_id.clone();
-            // 持久化（含 config 字段）
+            // 持久化（含 profiles 目录）
             let mut st = load_state();
             if !st.projects.iter().any(|p| p == workspace) {
                 st.projects.push(workspace.to_string());
@@ -380,28 +426,54 @@ fn get_backend_url(state: State<AppState>, session_id: String) -> Result<String,
     }
 }
 
-#[tauri::command]
-fn get_config() -> SidecarConfig {
-    normalize_config(load_state().config.unwrap_or_else(SidecarConfig::empty))
+/// profiles 目录校验：非空、id 唯一非空、provider 合法、默认档必须在目录中。
+fn validate_profiles(profiles: &[ProfileConfig], default_profile: &str) -> Result<(), String> {
+    if profiles.is_empty() {
+        return Err("profiles 不能为空".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    for p in profiles {
+        if p.id.is_empty() || !ids.insert(p.id.clone()) {
+            return Err(format!("profile id 非法或重复: {}", p.id));
+        }
+        if !matches!(p.provider.as_str(), "openai" | "anthropic" | "fake") {
+            return Err(format!("provider 必须是 openai|anthropic|fake: {}", p.id));
+        }
+    }
+    if !profiles.iter().any(|p| p.id == default_profile) {
+        return Err("defaultProfile 必须在 profiles 中".into());
+    }
+    Ok(())
 }
 
-/// 空 provider 回落 openai（与 PHP Config 默认一致）。
-/// 设置对话框的 select 只认合法 provider，空值会让保存必然失败。
-fn normalize_config(mut cfg: SidecarConfig) -> SidecarConfig {
-    if cfg.provider.is_empty() {
-        cfg.provider = "openai".into();
+/// 默认档 → sidecar env 注入结构；model 取 default_model 或该 profile 首个模型
+fn default_sidecar_config(st: &PersistedState) -> Option<SidecarConfig> {
+    let pid = st.default_profile.clone()?;
+    let p = st.profiles.iter().find(|p| p.id == pid)?;
+    if p.provider.is_empty() {
+        return None;
     }
-    cfg
+    let model = st.default_model.clone().or_else(|| p.models.first().cloned()).unwrap_or_default();
+    Some(SidecarConfig { provider: p.provider.clone(), api_key: p.api_key.clone(), base_url: p.base_url.clone(), model })
 }
 
 #[tauri::command]
-fn save_config(provider: String, api_key: String, base_url: String, model: String) -> Result<(), String> {
-    let provider = provider.trim().to_lowercase();
-    if !matches!(provider.as_str(), "openai" | "anthropic" | "fake") {
-        return Err("provider 必须是 openai|anthropic|fake".into());
-    }
+fn get_profiles() -> serde_json::Value {
+    let st = load_state();
+    serde_json::json!({
+        "profiles": st.profiles,
+        "defaultProfile": st.default_profile.unwrap_or_default(),
+        "defaultModel": st.default_model.unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+fn save_profiles(profiles: Vec<ProfileConfig>, default_profile: String, default_model: String) -> Result<(), String> {
+    validate_profiles(&profiles, &default_profile)?;
     let mut st = load_state();
-    st.config = Some(SidecarConfig { provider, api_key: api_key.trim().into(), base_url: base_url.trim().into(), model: model.trim().into() });
+    st.profiles = profiles;
+    st.default_profile = Some(default_profile);
+    st.default_model = if default_model.is_empty() { None } else { Some(default_model) };
     save_state_full(&st);
     Ok(())
 }
@@ -468,8 +540,8 @@ pub fn run() {
             get_backend_url,
             get_workspace,
             restart_session,
-            get_config,
-            save_config
+            get_profiles,
+            save_profiles
         ])
         .setup(|_app| {
             // SIGINT/SIGTERM（含终端 Ctrl+C）→ 干净退出，杜绝孤儿 php sidecar。
@@ -499,32 +571,46 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn normalize_config_fills_empty_provider() {
-        let cfg = normalize_config(SidecarConfig::empty());
-        assert_eq!(cfg.provider, "openai", "空 provider 回落 openai");
-        assert_eq!(cfg.model, "", "其余字段保持为空");
-
-        let mut custom = SidecarConfig::empty();
-        custom.provider = "anthropic".into();
-        assert_eq!(normalize_config(custom).provider, "anthropic", "合法值透传");
+    fn sample_profiles() -> Vec<ProfileConfig> {
+        vec![ProfileConfig {
+            id: "p-1".into(), name: "DS".into(), provider: "openai".into(),
+            api_key: "sk-1".into(), base_url: "https://api.deepseek.com".into(),
+            models: vec!["deepseek-chat".into()],
+        }]
     }
 
     #[test]
-    fn persisted_state_parses_config_field() {
+    fn persisted_state_parses_profiles_and_migrates_legacy_config() {
+        // 新格式
         let st: PersistedState = serde_json::from_str(
-            r#"{"projects":[],"last_session":"","config":{"provider":"openai","apiKey":"sk-1","baseUrl":"https://x/v1","model":"glm-4.7"}}"#,
-        )
-        .unwrap();
-        let cfg = st.config.expect("config 字段应被解析");
-        assert_eq!(cfg.api_key, "sk-1");
-        assert_eq!(cfg.model, "glm-4.7");
+            r#"{"projects":[],"last_session":"","profiles":[{"id":"p-1","name":"DS","provider":"openai","apiKey":"sk-1","baseUrl":"https://x","models":["m1"]}],"defaultProfile":"p-1","defaultModel":"m1"}"#,
+        ).unwrap();
+        assert_eq!(st.profiles.len(), 1);
+        assert_eq!(st.default_profile.as_deref(), Some("p-1"));
+        // 旧格式：单 config → profiles 空（迁移由 load_state/migrate 完成，序列化层面仅解析）
+        let legacy: PersistedState = serde_json::from_str(
+            r#"{"projects":[],"last_session":"","config":{"provider":"openai","apiKey":"sk-old","baseUrl":"https://y","model":"m-old"}}"#,
+        ).unwrap();
+        assert!(legacy.profiles.is_empty());
+        assert!(legacy.config.is_some(), "legacy config 仍被解析以供迁移");
+        let migrated = migrate_legacy(legacy);
+        assert_eq!(migrated.profiles.len(), 1);
+        assert_eq!(migrated.profiles[0].id, "default");
+        assert_eq!(migrated.profiles[0].api_key, "sk-old");
+        assert_eq!(migrated.default_profile.as_deref(), Some("default"));
+        assert_eq!(migrated.default_model.as_deref(), Some("m-old"));
     }
 
     #[test]
-    fn persisted_state_legacy_without_config_is_none() {
-        let st: PersistedState =
-            serde_json::from_str(r#"{"projects":["/a"],"last_session":"p-1"}"#).unwrap();
-        assert!(st.config.is_none(), "旧格式无 config 字段 → None");
+    fn validate_profiles_rules() {
+        assert!(validate_profiles(&sample_profiles(), "p-1").is_ok());
+        assert!(validate_profiles(&[], "p-1").is_err(), "空列表拒绝");
+        assert!(validate_profiles(&sample_profiles(), "nope").is_err(), "default 不在列表拒绝");
+        let mut dup = sample_profiles();
+        dup.push(dup[0].clone());
+        assert!(validate_profiles(&dup, "p-1").is_err(), "id 重复拒绝");
+        let mut bad = sample_profiles();
+        bad[0].provider = "nope".into();
+        assert!(validate_profiles(&bad, "p-1").is_err(), "provider 非法拒绝");
     }
 }
