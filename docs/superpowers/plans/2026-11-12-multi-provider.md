@@ -1266,3 +1266,70 @@ git commit -m "feat: App 启动拉取目录/项目就绪推送热更新；标题
 2. 已运行 sidecar 下改 apiKey/新增平台 → 保存 → 立即生效（无重启、无断线横幅）
 3. 会话 A/B 各自选择互不干扰，切回保持；重启 app 后仍恢复
 4. CLI 不回归（phpunit 全绿）；旧 desktop.json 无损迁移
+
+---
+
+# Phase 2：模型条目结构化 + 每模型参数（Task 11-16，spec 修订 2）
+
+> 延续同一分支 feature/multi-provider；Task 编号接续 Phase 1。全局约束、验收流程同 Phase 1。
+> 设计见 spec「修订 2」节；模型参数映射现有机制（contextTokens→压缩阈值；maxTokens→请求体）。
+
+### Task 11: PHP —— Config::maxTokensExplicit + OpenAICompatClient 条件 max_tokens
+
+**Files:** Modify `src/Config.php`、`src/LLM/OpenAICompatClient.php`；Test `tests/HttpTransportTest.php`（沿用其本地 HTTP 服务器断言请求体的模式）
+
+**Interfaces:** Produces `Config::maxTokensExplicit(): bool`（`isset($this->env['AGENT_MAX_TOKENS'])`）；OpenAICompatClient 请求体仅在 explicit 时含 `max_tokens`。AnthropicClient 不动（协议必传，值仍 `maxTokens()`）。
+
+- [ ] Step 1 失败测试：HttpTransportTest 模式加两用例——client Config 带 `AGENT_MAX_TOKENS=>2048` → 请求体 JSON 含 `"max_tokens":2048`；不带 → 不含该键（其余字段照常）
+- [ ] Step 2 RED → Step 3 实现（Config 方法 + body 条件插入）→ Step 4 GREEN + 全量 → Step 5 `git commit -m "feat: openai 兼容端点仅在显式设置时发送 max_tokens（Config::maxTokensExplicit）"`
+
+### Task 12: PHP —— ProfileRegistry 模型条目（归一化/按名解析/参数 configFor/activeContextTokens）
+
+**Files:** Modify `src/Server/ProfileRegistry.php`；Test `tests/ProfileRegistryTest.php`（追加）
+
+**Interfaces:**
+- `setProfiles` 归一化 models：string → `['name'=>s]`；array → name 必填非空，contextTokens/maxTokens 可选正整数（非法抛 InvalidArgumentException）；归一化后存储（GET 回显统一对象形态）
+- `resolve`：model 名匹配条目（`name === model`），空则用 models[0] 的 name；cache key 仍 `pid|name`；记录 `lastResolved = ['profile'=>…, 'modelName'=>…]`
+- `configFor(profile, entry)`：条目含 contextTokens → env `AGENT_CONTEXT_TOKENS`；含 maxTokens → `AGENT_MAX_TOKENS`（只在有值时写入 → maxTokensExplicit 才为 true）
+- `activeContextTokens(): ?int`：lastResolved 条目的 contextTokens（无 lastResolved/未设置 → null）；`setProfiles` 清 lastResolved
+- bin/server 初值（string models）经归一化照常工作
+
+- [ ] Step 1 失败测试：归一化（string→对象 / 非法 name 抛 / 负数抛）；resolve 按名取参数（断言 configFor 产物——经 client 不可见，改为暴露 `resolveConfigForTesting(profileId, model): Config`? 不引入新公开面：改用「configFor private + 反射」过重——**采用**：resolve 后 `activeContextTokens()` 断言条目值；maxTokens 经 Task 11 的 explicit 链路由 HttpTransport 集成或 `$r->resolve('p1','m2')` 后 activeContextTokens 组合断言；测试覆盖：string 兼容、按名解析、缓存键不变、setProfiles 清 lastResolved
+- [ ] Step 2 RED → Step 3 实现 → Step 4 GREEN + 全量 → Step 5 `git commit -m "feat: ProfileRegistry 模型条目化——按名解析参数 configFor + activeContextTokens"`
+
+### Task 13: PHP —— CompactPlugin 跟随每模型 contextTokens
+
+**Files:** Modify `plugins/compact/src/CompactPlugin.php`；Test `tests/CompactPluginTest.php`（追加）
+
+**Interfaces:** 跟随分支 factory 的 contextTokens 参数改为压缩时刻求值：`$kernel->profileRegistry()?->activeContextTokens() ?? $contextTokens`（activeClient 同源逻辑不变；显式 provider 分支不动）。测试：registry 含 contextTokens=500 的条目 → resolve 后触发 factory → Compactor 收到 500；未解析 → 全局值。
+
+- [ ] TDD：Step 1 失败测试（现有测试构造注入 factory 的路径不受影响）→ Step 2 RED → Step 3 实现 → Step 4 GREEN + 全量 → Step 5 `git commit -m "feat: 自动压缩阈值跟随当前对话模型的 contextTokens"`
+
+### Task 14: Rust —— ModelEntry 双格式反序列化 + 迁移
+
+**Files:** Modify `desktop/src-tauri/src/lib.rs`；Test 同文件 tests 模块（追加/改写）
+
+**Interfaces:**
+- `ModelEntry { name: String, context_tokens: Option<u64>, max_tokens: Option<u64> }`（camelCase rename）
+- `ProfileConfig.models: Vec<ModelEntry>`，`#[serde(default, deserialize_with = "deserialize_models")]`——数组项为字符串（旧格式）或对象（新格式）均可；**序列化恒为对象**
+- `default_sidecar_config`：env model 取 `p.models.first().map(|m| m.name.clone())`
+- `validate_profiles`：条目 name trim 非空校验
+- 既有测试改写（models 字符串 → 对象）+ 新增：字符串项解析、混合数组、name 空 → Err
+
+- [ ] TDD → `cargo test && cargo clippy` → `git commit -m "feat: Rust 模型条目化——ModelEntry 双格式解析（旧字符串无损兼容）"`
+
+### Task 15: 前端 —— ModelEntry 类型 + 设置页动态模型列表 + Composer/TitleBar 适配
+
+**Files:** Modify `desktop/src/lib/tauri.ts`、`desktop/src/components/settings/SettingsDialog.tsx(.test.tsx)`、`desktop/src/components/chat/Composer.tsx(.test.tsx)`、`desktop/src/components/layout/TitleBar.tsx(.test.tsx)`
+
+**Interfaces:**
+- `type ModelEntry = { name: string; contextTokens?: number | null; maxTokens?: number | null }`；`Profile.models: ModelEntry[]`
+- SettingsDialog 平台卡片：模型区改动态列表——每条一行（name Input / contextTokens 数字输入 placeholder「上下文 128000」/ maxTokens 数字输入 placeholder「输出默认」/ 删除按钮）+「添加模型」；clonePayload 深拷贝条目；保存组装过滤空 name、数字字段空串→null；runTest 目标模型取默认档条目 name
+- Composer：`models = activeProfile?.models.map(m => m.name) ?? []`（modelTemp/includes/首模型回落同步改 `.name`）；TitleBar `selModel` 回落 `.models[0]?.name ?? ""`
+- 测试适配 + 新增：动态添加/删除模型行；参数输入回填；Composer 选项按 name
+
+- [ ] TDD → `npm test && npx tsc -b` 全绿 → `git commit -m "feat: 设置页模型动态条目化（每模型 contextTokens/maxTokens）；对话切换与徽章适配 name 字段"`
+
+### Task 16: 增量终审（05eddb6..HEAD）+ 修复波
+
+- 全量三套件门禁 → 派发终审子代理（范围=Phase 2 diff；携带 Phase 1 遗留 follow-ups 清单）→ 修复波 → 复审 → 用户手工验收 → 合并
