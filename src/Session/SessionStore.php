@@ -20,7 +20,12 @@ interface SessionStore
     /** 读取归一化消息历史；不存在返回 [] */
     public function load(string $sessionId): array;
 
-    public function save(string $sessionId, array $messages): void;
+    /**
+     * 保存会话（整段覆盖）。
+     * $selection = ['profileId' => ?string, 'model' => ?string] 为本回合的模型选择；
+     * 传 null 表示保留上次保存的选择，首次保存且未传时为 null（继承默认档）。
+     */
+    public function save(string $sessionId, array $messages, ?array $selection = null): void;
 
     public function delete(string $sessionId): void;
 }

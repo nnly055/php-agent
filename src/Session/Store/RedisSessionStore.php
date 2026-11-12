@@ -76,16 +76,19 @@ final class RedisSessionStore implements SessionStore
         return $j['messages'];
     }
 
-    public function save(string $sessionId, array $messages): void
+    public function save(string $sessionId, array $messages, ?array $selection = null): void
     {
         $r = $this->conn();
         $old = json_decode((string) $r->get($this->key($sessionId)), true);
+        $sel = $selection ?? []; // null = 保留旧值
         $meta = new SessionMeta(
             $sessionId,
             $old['meta']['title'] ?? SessionMeta::deriveTitle($messages),
             (int) ($old['meta']['createdAt'] ?? time()),
             time(),
             count($messages),
+            $sel['profileId'] ?? ($old['meta']['profileId'] ?? null),
+            $sel['model'] ?? ($old['meta']['model'] ?? null),
         );
         $r->set($this->key($sessionId), json_encode(
             ['schemaVersion' => 1, 'meta' => $meta->toArray(), 'messages' => $messages],

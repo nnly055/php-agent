@@ -40,19 +40,24 @@ final class Sqlite3SessionStore implements SessionStore
     public function list(int $limit = 50): array
     {
         $stmt = $this->db->prepare(
-            'SELECT id, title, message_count, created_at, updated_at
+            'SELECT id, title, message_count, created_at, updated_at, payload
              FROM sessions ORDER BY updated_at DESC LIMIT :limit'
         );
         $stmt->bindValue(':limit', $limit, SQLITE3_INTEGER);
         $res = $stmt->execute();
         $metas = [];
         while (($row = $res->fetchArray(SQLITE3_ASSOC)) !== false) {
+            // 模型选择存在 payload 的 meta 块里（不加列，免表结构迁移）；旧行 payload 无 meta → null
+            $j = json_decode((string) $row['payload'], true);
+            $m = is_array($j) && is_array($j['meta'] ?? null) ? $j['meta'] : [];
             $metas[] = new SessionMeta(
                 (string) $row['id'],
                 (string) $row['title'],
                 (int) $row['created_at'],
                 (int) $row['updated_at'],
                 (int) $row['message_count'],
+                isset($m['profileId']) ? (string) $m['profileId'] : null,
+                isset($m['model']) ? (string) $m['model'] : null,
             );
         }
         return $metas;
@@ -73,12 +78,20 @@ final class Sqlite3SessionStore implements SessionStore
         return $j['messages'];
     }
 
-    public function save(string $sessionId, array $messages): void
+    public function save(string $sessionId, array $messages, ?array $selection = null): void
     {
-        $stmt = $this->db->prepare('SELECT created_at FROM sessions WHERE id = :id');
+        $stmt = $this->db->prepare('SELECT created_at, payload FROM sessions WHERE id = :id');
         $stmt->bindValue(':id', $sessionId, SQLITE3_TEXT);
         $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
         $createdAt = $row !== false ? (int) $row['created_at'] : time();
+
+        // 模型选择存进 payload 的 meta 块（不加列，免表结构迁移）；null = 保留旧值
+        $sel = $selection ?? [];
+        $oldPayload = [];
+        if ($row !== false) {
+            $j = json_decode((string) $row['payload'], true);
+            $oldPayload = is_array($j) ? $j : [];
+        }
 
         $stmt = $this->db->prepare(
             'INSERT INTO sessions (id, title, message_count, created_at, updated_at, payload)
@@ -95,7 +108,14 @@ final class Sqlite3SessionStore implements SessionStore
         $stmt->bindValue(':ca', $createdAt, SQLITE3_INTEGER);
         $stmt->bindValue(':ua', time(), SQLITE3_INTEGER);
         $stmt->bindValue(':payload', json_encode(
-            ['schemaVersion' => 1, 'messages' => $messages],
+            [
+                'schemaVersion' => 1,
+                'meta' => [
+                    'profileId' => $sel['profileId'] ?? ($oldPayload['meta']['profileId'] ?? null),
+                    'model' => $sel['model'] ?? ($oldPayload['meta']['model'] ?? null),
+                ],
+                'messages' => $messages,
+            ],
             JSON_UNESCAPED_UNICODE
         ), SQLITE3_TEXT);
         $stmt->execute();

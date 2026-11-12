@@ -125,6 +125,53 @@ final class SessionStoreTest extends TestCase
         self::assertStringContainsString('你好（中文不转义）', (string) $raw);
     }
 
+    /**
+     * 选择持久化契约：对四个实现各跑一遍共享断言
+     * （redis 本地无服务则跳过，与 testRedisStoreIfAvailable 同一策略）。
+     */
+    public function testSelectionPersistence(): void
+    {
+        foreach ($this->stores() as $kind => $store) {
+            $this->assertSelectionPersistence($store);
+        }
+    }
+
+    public function testRedisSelectionPersistence(): void
+    {
+        if (!class_exists(\Redis::class)) {
+            self::markTestSkipped('本机未装 ext-redis');
+        }
+        try {
+            $store = new RedisSessionStore('127.0.0.1', 6379);
+            $store->list(); // 探活
+        } catch (\Throwable $e) {
+            self::markTestSkipped('本地 Redis 不可用: ' . $e->getMessage());
+        }
+
+        $store->delete('sel-1'); // 清理可能的历史残留，保证初始态干净
+        $this->assertSelectionPersistence($store);
+        $store->delete('sel-1');
+    }
+
+    /** 选择持久化：save 传 selection 落盘，null 保留旧值，缺省新会话为 null（继承默认档） */
+    private function assertSelectionPersistence(SessionStore $store): void
+    {
+        $store->save('sel-1', [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]]);
+        self::assertNull($store->list(10)[0]->profileId ?? null, '初始无选择');
+        // 用 list 找到 sel-1（list 按 updatedAt 排序，多会话时不稳定）——按 id 过滤
+        $meta = array_values(array_filter($store->list(50), static fn ($m) => $m->id === 'sel-1'))[0];
+        self::assertNull($meta->profileId);
+
+        $store->save('sel-1', [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], ['profileId' => 'p-1', 'model' => 'glm-4.7']);
+        $meta = array_values(array_filter($store->list(50), static fn ($m) => $m->id === 'sel-1'))[0];
+        self::assertSame('p-1', $meta->profileId);
+        self::assertSame('glm-4.7', $meta->model);
+
+        $store->save('sel-1', [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]]); // null = 保留
+        $meta = array_values(array_filter($store->list(50), static fn ($m) => $m->id === 'sel-1'))[0];
+        self::assertSame('p-1', $meta->profileId, 'null selection 保留旧值');
+    }
+
     public function testRedisStoreIfAvailable(): void
     {
         if (!class_exists(\Redis::class)) {

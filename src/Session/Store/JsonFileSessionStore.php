@@ -49,16 +49,19 @@ final class JsonFileSessionStore implements SessionStore
         return $j['messages'];
     }
 
-    public function save(string $sessionId, array $messages): void
+    public function save(string $sessionId, array $messages, ?array $selection = null): void
     {
         $file = $this->file($sessionId);
         $old = json_decode((string) @file_get_contents($file), true);
+        $sel = $selection ?? []; // null = 保留旧值
         $meta = new SessionMeta(
             $sessionId,
             $old['meta']['title'] ?? SessionMeta::deriveTitle($messages),
             (int) ($old['meta']['createdAt'] ?? time()),
             time(),
             count($messages),
+            $sel['profileId'] ?? ($old['meta']['profileId'] ?? null),
+            $sel['model'] ?? ($old['meta']['model'] ?? null),
         );
         $payload = ['schemaVersion' => 1, 'meta' => $meta->toArray(), 'messages' => $messages];
         $tmp = $file . '.tmp.' . uniqid();

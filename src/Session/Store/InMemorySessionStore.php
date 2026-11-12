@@ -27,9 +27,10 @@ final class InMemorySessionStore implements SessionStore
         return $this->sessions[$sessionId]['messages'] ?? [];
     }
 
-    public function save(string $sessionId, array $messages): void
+    public function save(string $sessionId, array $messages, ?array $selection = null): void
     {
         $old = $this->sessions[$sessionId]['meta'] ?? null;
+        $sel = $selection ?? []; // null = 保留旧值
         $this->sessions[$sessionId] = [
             'messages' => $messages,
             'meta' => new SessionMeta(
@@ -38,6 +39,8 @@ final class InMemorySessionStore implements SessionStore
                 $old?->createdAt ?? time(),
                 time(),
                 count($messages),
+                $sel['profileId'] ?? $old?->profileId ?? null,
+                $sel['model'] ?? $old?->model ?? null,
             ),
         ];
     }
