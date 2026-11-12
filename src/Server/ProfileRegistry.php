@@ -53,16 +53,18 @@ final class ProfileRegistry
         if (!isset($ids[$defaultProfileId])) {
             throw new \InvalidArgumentException('defaultProfile 必须在 profiles 中');
         }
-        // 归一化 models：旧格式字符串 → 对象；条目 name 必填，contextTokens/maxTokens 可选正整数
+        // 归一化 models：旧格式字符串 → 对象；条目 name 必填，contextTokens/maxTokens 可选正整数，
+        // maxTokens 另有 ≥1024 下限（与 Config::maxTokens 对齐）
         $normalized = [];
         foreach ($profiles as $p) {
-            $p['models'] = array_map(static function ($m) {
+            $id = (string) ($p['id'] ?? '');
+            $p['models'] = array_map(static function ($m) use ($id) {
                 if (is_string($m)) {
                     return ['name' => trim($m)]; // 旧格式字符串 → 对象
                 }
                 $name = trim((string) ($m['name'] ?? ''));
                 if ($name === '') {
-                    throw new \InvalidArgumentException('模型条目缺少 name');
+                    throw new \InvalidArgumentException("profile {$id} 的模型条目缺少 name");
                 }
                 $entry = ['name' => $name];
                 foreach (['contextTokens', 'maxTokens'] as $k) {
@@ -70,6 +72,11 @@ final class ProfileRegistry
                         $v = filter_var($m[$k], FILTER_VALIDATE_INT);
                         if ($v === false || $v <= 0) {
                             throw new \InvalidArgumentException("模型 {$name} 的 {$k} 必须是正整数");
+                        }
+                        // maxTokens 显式设置但低于 1024 → 显式报错（与 Config::maxTokens 的 max(1024, …)
+                        // 下限对齐），避免校验通过却被静默抬高到 1024；contextTokens 不加下限，>0 即可
+                        if ($k === 'maxTokens' && $v < 1024) {
+                            throw new \InvalidArgumentException("模型 {$name} 的 maxTokens 不能低于 1024");
                         }
                         $entry[$k] = $v;
                     }

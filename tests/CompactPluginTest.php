@@ -186,6 +186,7 @@ final class CompactPluginTest extends TestCase
         putenv('AGENT_PROVIDER');
         putenv('AGENT_COMPACT_PROVIDER');
         putenv('AGENT_CONTEXT_TOKENS');
+        putenv('AGENT_WORKSPACE');
     }
 
     /**

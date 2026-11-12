@@ -78,7 +78,8 @@ final class ProfileRegistryTest extends TestCase
         $r = new ProfileRegistry($this->kernel());
         $p = [['id' => 'x', 'name' => 'X', 'provider' => 'openai', 'baseUrl' => '', 'apiKey' => '', 'models' => [['name' => '  ']]]];
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('缺少 name');
+        // 错误带 profile id，便于多平台目录下定位是哪一条
+        $this->expectExceptionMessage('profile x 的模型条目缺少 name');
         $r->setProfiles($p, 'x');
     }
 
@@ -95,6 +96,29 @@ final class ProfileRegistryTest extends TestCase
                 self::assertStringContainsString("{$k} 必须是正整数", $e->getMessage());
             }
         }
+    }
+
+    public function testSetProfilesRejectsMaxTokensBelowFloor(): void
+    {
+        // maxTokens 显式设置但 < 1024 → 显式报错（与 Config::maxTokens 的 max(1024, …) 下限对齐），
+        // 而非校验通过后被静默抬高到 1024
+        $r = new ProfileRegistry($this->kernel());
+        $p = [['id' => 'x', 'name' => 'X', 'provider' => 'openai', 'baseUrl' => '', 'apiKey' => '', 'models' => [['name' => 'm', 'maxTokens' => 500]]]];
+        try {
+            $r->setProfiles($p, 'x');
+            self::fail('maxTokens=500 应抛 InvalidArgumentException');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringContainsString('maxTokens 不能低于 1024', $e->getMessage());
+        }
+    }
+
+    public function testSetProfilesAcceptsMaxTokensAtFloorAndMinimalContextTokens(): void
+    {
+        // 下限值 maxTokens=1024 通过；contextTokens 无下限，1 即通过
+        $r = new ProfileRegistry($this->kernel());
+        $p = [['id' => 'x', 'name' => 'X', 'provider' => 'openai', 'baseUrl' => '', 'apiKey' => '', 'models' => [['name' => 'm', 'contextTokens' => 1, 'maxTokens' => 1024]]]];
+        $r->setProfiles($p, 'x');
+        self::assertSame([['name' => 'm', 'contextTokens' => 1, 'maxTokens' => 1024]], $r->profiles()['profiles'][0]['models']);
     }
 
     public function testActiveContextTokensFollowsResolvedEntry(): void
