@@ -67,7 +67,7 @@ describe("SettingsDialog 平台管理", () => {
     screen.getAllByRole("button", { name: "删除" }).forEach((b) => expect(b).toBeEnabled());
   });
 
-  it("测试连接用当前编辑平台的值", async () => {
+  it("测试连接用默认档卡片的值", async () => {
     (api.testConfig as any).mockResolvedValue({ ok: true, message: "连接成功", latency_ms: 88 });
     useUiStore.getState().setSettingsOpen(true);
     render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
@@ -77,6 +77,28 @@ describe("SettingsDialog 平台管理", () => {
     fireEvent.click(btn);
     await waitFor(() => expect(screen.getByText(/连接成功（88ms）/)).toBeInTheDocument());
     expect(api.testConfig).toHaveBeenCalledWith("http://127.0.0.1:1", expect.objectContaining({ apiKey: "sk-old" }));
+  });
+
+  it("默认档指向第二个平台时，测试连接用第二个平台的值", async () => {
+    (api.testConfig as any).mockResolvedValue({ ok: true, message: "连接成功", latency_ms: 66 });
+    useUiStore.getState().setProfilesPayload({
+      profiles: [
+        { id: "p-1", name: "DS", provider: "openai", apiKey: "sk-first", baseUrl: "https://first.example", models: ["m1"] },
+        { id: "p-2", name: "GLM", provider: "openai", apiKey: "sk-second", baseUrl: "https://second.example", models: ["m2"] },
+      ],
+      defaultProfile: "p-2",
+      defaultModel: "",
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
+    const btn = await screen.findByText("测试连接");
+    await waitFor(() => expect(btn).toBeEnabled());
+    fireEvent.click(btn);
+    await waitFor(() => expect(screen.getByText(/连接成功（66ms）/)).toBeInTheDocument());
+    expect(api.testConfig).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      expect.objectContaining({ apiKey: "sk-second", baseUrl: "https://second.example", model: "m2" }),
+    );
   });
 
   it("无目录时显示空态引导", async () => {

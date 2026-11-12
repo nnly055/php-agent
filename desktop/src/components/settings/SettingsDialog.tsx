@@ -91,17 +91,17 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
   }
 
   async function runTest() {
-    // 用当前编辑的第一个平台的值发起测试
-    const first = draft?.profiles[0];
-    if (!testUrl || !first) return;
+    // 用默认档卡片（defaultProfile 对应条目，找不到回落首个）的值发起测试
+    const target = draft?.profiles.find((p) => p.id === draft.defaultProfile) ?? draft?.profiles[0];
+    if (!testUrl || !target) return;
     setTesting(true);
     setResult(null);
     try {
       const r = await testConfig(testUrl, {
-        provider: first.provider,
-        apiKey: first.apiKey,
-        baseUrl: first.baseUrl,
-        model: first.models[0] ?? "",
+        provider: target.provider,
+        apiKey: target.apiKey,
+        baseUrl: target.baseUrl,
+        model: target.models[0] ?? "",
       });
       setResult({ ok: r.ok, message: r.ok ? `连接成功（${r.latency_ms}ms）` : r.message });
     } catch (e: any) {
