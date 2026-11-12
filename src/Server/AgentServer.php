@@ -76,6 +76,12 @@ final class AgentServer
         }
 
         if ($path === '/config/profiles') {
+            // 凭据端点：CORS * 下简单 GET 无预检，浏览器跨域请求必带 Origin（可被任意网页发起；
+            // 桌面 webview/本地工具/同源页面不带或同源），非白名单 Origin 一律拒绝，收敛 key 外泄面
+            $origin = $request->getHeaderLine('Origin');
+            if ($origin !== '' && !$this->isAllowedOrigin($origin, $request->getHeaderLine('Host'))) {
+                return $this->json(403, ['error' => 'Origin 不被允许']);
+            }
             if ($method === 'GET') {
                 // 原样返回原始列表（含 apiKey）：仅绑 127.0.0.1 的桌面本地接口，设置页需要回显
                 return $this->json(200, $this->profiles->profiles());
@@ -140,6 +146,34 @@ final class AgentServer
         return $this->json(404, ['error' => 'Not Found']);
     }
 
+    /**
+     * /config/profiles 的 Origin 白名单：Tauri webview（生产 tauri://localhost 与
+     * http(s)://tauri.localhost 两形态）+ vite dev server（http://localhost:1420），
+     * 以及与请求 Host 头同源的 Origin（内置网页聊天页 http://127.0.0.1:<port> 的同源请求）。
+     * authority 比较只看 host + port（缺省端口统一按 80），不比较 scheme。
+     */
+    private function isAllowedOrigin(string $origin, string $hostHeader = ''): bool
+    {
+        if (in_array($origin, ['tauri://localhost', 'http://tauri.localhost', 'http://localhost:1420'], true)) {
+            return true;
+        }
+        if ($hostHeader === '') {
+            return false;
+        }
+        $originHost = parse_url($origin, PHP_URL_HOST);
+        if (!is_string($originHost) || $originHost === '') {
+            return false;
+        }
+        // Host 头是裸 authority（如 127.0.0.1:8091），补 scheme 再 parse
+        $host = parse_url('http://' . $hostHeader, PHP_URL_HOST);
+        if (!is_string($host) || $host === '') {
+            return false;
+        }
+        $originPort = parse_url($origin, PHP_URL_PORT);
+        $hostPort = parse_url('http://' . $hostHeader, PHP_URL_PORT);
+        return $originHost === $host && ($originPort ?: 80) === ($hostPort ?: 80);
+    }
+
     private function handleConfirm(string $id, \Psr\Http\Message\ServerRequestInterface $request): Response
     {
         $body = json_decode((string) $request->getBody(), true);
@@ -176,6 +210,7 @@ final class AgentServer
             ? ['profileId' => $profileId, 'model' => $model] : null;
 
         $sid = (string) ($body['session_id'] ?? 'default');
+
         $messages = $this->store->load($sid);
         $stream = new ThroughStream();
         $broker = $this->broker;

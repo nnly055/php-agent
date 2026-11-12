@@ -169,6 +169,55 @@ final class ServerApiTest extends TestCase
         self::assertSame(400, $resp->getStatusCode());
     }
 
+    public function testConfigProfilesRejectsCrossOrigin(): void
+    {
+        // CORS * 下简单 GET 无预检：任意网页都能读全量 apiKey / 改写端点。
+        // 凭据端点必须对带 Origin 的跨域请求（浏览器必带）返回 403。
+        $s = $this->server();
+        $payload = ['profiles' => [
+            ['id' => 'p-1', 'name' => 'F', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => 'sk-secret', 'models' => ['fake']],
+        ], 'defaultProfile' => 'p-1'];
+        $get = $s->handle(new ServerRequest('GET', 'http://localhost/config/profiles', ['Origin' => 'https://evil.example']));
+        self::assertSame(403, $get->getStatusCode());
+        self::assertArrayHasKey('error', json_decode((string) $get->getBody(), true));
+        $post = $s->handle(new ServerRequest('POST', 'http://localhost/config/profiles', ['Origin' => 'https://evil.example'], json_encode($payload, JSON_THROW_ON_ERROR)));
+        self::assertSame(403, $post->getStatusCode());
+        // 目录未被改写
+        $get2 = json_decode((string) $s->handle(new ServerRequest('GET', 'http://localhost/config/profiles'))->getBody(), true);
+        self::assertSame('default', $get2['defaultProfile']);
+    }
+
+    public function testConfigProfilesAllowsNoOriginWhitelistedAndSameOrigin(): void
+    {
+        $s = $this->server();
+        $payload = ['profiles' => [
+            ['id' => 'p-1', 'name' => 'F', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => 'sk-secret', 'models' => ['fake']],
+        ], 'defaultProfile' => 'p-1'];
+
+        // 无 Origin（curl / 桌面 Tauri webview invoke / 本地工具）→ 放行
+        $post = $s->handle(new ServerRequest('POST', 'http://localhost/config/profiles', [], json_encode($payload, JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $post->getStatusCode());
+
+        // Tauri 白名单源（生产 tauri://localhost / http(s)://tauri.localhost、dev vite）
+        foreach (['tauri://localhost', 'http://tauri.localhost', 'http://localhost:1420'] as $origin) {
+            $resp = $s->handle(new ServerRequest('GET', 'http://localhost/config/profiles', ['Origin' => $origin]));
+            self::assertSame(200, $resp->getStatusCode(), "白名单放行: {$origin}");
+        }
+
+        // 同源：内置网页聊天页 http://127.0.0.1:<port>，Origin 与 Host 头 authority 一致（显式 Host 头，含端口）
+        $req = new ServerRequest(
+            'POST',
+            'http://127.0.0.1:8091/config/profiles',
+            ['Host' => '127.0.0.1:8091', 'Origin' => 'http://127.0.0.1:8091'],
+            json_encode($payload, JSON_THROW_ON_ERROR),
+        );
+        self::assertSame(200, $s->handle($req)->getStatusCode());
+
+        // 同源：默认端口统一（Origin 与 Host 都无端口 → 按 80 比较）
+        $req = new ServerRequest('GET', 'http://localhost/config/profiles', ['Origin' => 'http://localhost']);
+        self::assertSame(200, $s->handle($req)->getStatusCode());
+    }
+
     public function testAgentPerTurnSwitch(): void
     {
         $store = new InMemorySessionStore();
