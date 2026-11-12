@@ -14,8 +14,6 @@ import {
   listProjects,
   onBackendEvent,
   openProject,
-  restartSession,
-  type AgentConfig,
   type OpenedSession,
 } from "./lib/tauri";
 import { getStatus, listSessions } from "./lib/api";
@@ -159,28 +157,6 @@ export default function App() {
     }
   }, [openTab]);
 
-  // 保存全局配置（持久化已由对话框完成）：重启所有运行中的项目并重绑新 sessionId/端口。
-  // 重启失败的项目置 error + disconnected（ConnectionBanner 可重试），不影响其他项目。
-  const applyConfig = useCallback(async (_cfg: AgentConfig) => {
-    for (const tab of tabs) {
-      try {
-        const opened = await restartSession(tab.id);
-        tab.store.getState().setBackend(`http://127.0.0.1:${opened.port}`);
-        tab.store.getState().setSessionId(opened.sessionId);
-        tab.store.getState().setError(null);
-        // tab.id 变更会触发 ProjectWorkspace 的 refresh（重拉 status/sessions）
-        const wasActive = tab.id === activeId;
-        setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, id: opened.sessionId } : t)));
-        // activeId 同步重绑：否则活跃 tab 换 id 后 activeTab 判空，界面回落到空项目页
-        if (wasActive) setActiveId(opened.sessionId);
-      } catch (e: any) {
-        tab.store.getState().setConnected(false);
-        tab.store.getState().setError(e?.message ?? "重启失败");
-      }
-    }
-    useUiStore.getState().setSettingsOpen(false);
-  }, [tabs, activeId]);
-
   const closeTab = useCallback(async (tab: ProjectTab) => {
     try { await closeProject(tab.id); } catch { /* 进程可能已退出 */ }
     setTabs((prev) => {
@@ -223,7 +199,6 @@ export default function App() {
       </div>
       <SettingsDialog
         testUrl={activeTab?.store.getState().connected ? activeTab.store.getState().backendUrl : null}
-        onSaved={applyConfig}
       />
     </div>
   );
