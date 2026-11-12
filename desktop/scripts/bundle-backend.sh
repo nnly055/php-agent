@@ -77,7 +77,11 @@ done
 
 # ── 3) 冒烟验证：二进制可执行 + autoload 可用 + 必需扩展 ──────
 "$PHP_BIN" -v | head -1
-"$PHP_BIN" -r 'require "'"$DEST"'/vendor/autoload.php"; echo class_exists("PhpAgent\\Config") ? "autoload-ok" : exit(1), "\n";'
+# Git Bash 的 /d/... 路径原生 php.exe 不认识；cygpath -m 转正斜杠混合路径
+# （Windows 下也可直接被 PHP 接受，且避免反斜杠在 PHP 字符串里的转义问题）
+SMOKE_DEST="$DEST"
+command -v cygpath >/dev/null 2>&1 && SMOKE_DEST="$(cygpath -m "$DEST")"
+"$PHP_BIN" -r 'require "'"$SMOKE_DEST"'/vendor/autoload.php"; echo class_exists("PhpAgent\\Config") ? "autoload-ok" : exit(1), "\n";'
 # 注意：不能用 `php -m | grep -q`——pipefail 下 grep 提前退出会吃掉 php 的 SIGPIPE 变成 race 失败，先落变量再匹配
 MODULES="$("$PHP_BIN" -m 2>&1)"
 for ext in curl mbstring sqlite3; do

@@ -283,11 +283,15 @@ npm run tauri build                       # 产出 .app / .dmg（macOS）
 - **静态 PHP**：取 [static-php-cli](https://github.com/static-php/static-php-cli) 预编译二进制
   （默认 8.2.31，13MB，含 curl/mbstring/sqlite3/redis/pcntl 等全部必需扩展），带本地缓存与
   下载验证（重试 + 文件格式校验），可用 `PHP_VERSION` / `FORCE_PHP=1` 控制
+- **多平台 CI**：推 `v*` tag 或手动 dispatch 触发 [.github/workflows/release.yml](.github/workflows/release.yml)——
+  macOS（Apple Silicon/Intel dmg）、Linux（AppImage/deb）、Windows（msi/nsis）四平台并行构建，
+  产物自动挂到该 tag 的 Release；dispatch 留空 tag = 仅验证构建（产物在 run Artifacts）
 - 内核代码目录随 bundle 进 resources（src/bin/plugins/public/vendor 原样保留，
   插件发现与 public 资源结构不变）；产物不入库（.gitignore），构建时重新生成
 - Rust 侧 PHP 解析三级回退：`PHP_AGENT_PHP` 环境变量 → bundle 资源里的静态 php
   （启动前自动 chmod 755）→ 系统 `php`（dev 兜底）
-- Windows/Linux：bundle-backend.sh 依据 `uname` 下载对应产物，tauri build 在对应平台执行即可
+- 平台差异：static-php 官方无 Windows 预编译产物，**Windows 打包使用系统 PHP**
+  （CI runner 由 setup-php 提供；本机打包需自装 PHP ≥ 8.1），macOS/Linux 保持零系统依赖
 
 ## 路线图
 
