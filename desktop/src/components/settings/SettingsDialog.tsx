@@ -48,11 +48,13 @@ export function SettingsDialog({
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  // 打开时回填持久化配置
+  // 打开时回填持久化配置；空 provider 回落 openai（get_config 未配置时返回空字段）
   useEffect(() => {
     if (!open) return;
     setResult(null);
-    getConfig().then(setCfg).catch(() => {});
+    getConfig()
+      .then((saved) => setCfg({ ...saved, provider: saved.provider || "openai" }))
+      .catch(() => {});
   }, [open]);
 
   const meta = PROVIDERS.find((p) => p.id === cfg.provider) ?? PROVIDERS[0];
@@ -65,7 +67,8 @@ export function SettingsDialog({
       const r = await testConfig(testUrl, cfg);
       setResult({ ok: r.ok, message: r.ok ? `连接成功（${r.latency_ms}ms）` : r.message });
     } catch (e: any) {
-      setResult({ ok: false, message: e?.message ?? "测试请求失败" });
+      // Tauri invoke 的 rejection 是字符串（无 .message 属性），必须按类型取，否则真实错误被吞
+      setResult({ ok: false, message: (typeof e === "string" ? e : e?.message) ?? "测试请求失败" });
     } finally {
       setTesting(false);
     }
@@ -77,7 +80,8 @@ export function SettingsDialog({
       await saveConfig(cfg); // 持久化；重启各项目由 App 的 onSaved 编排
       await onSaved(cfg);
     } catch (e: any) {
-      setResult({ ok: false, message: e?.message ?? "保存失败" });
+      // 同上：字符串 rejection 直接展示，避免所有失败都显示成笼统的「保存失败」
+      setResult({ ok: false, message: (typeof e === "string" ? e : e?.message) ?? "保存失败" });
     } finally {
       setSaving(false);
     }

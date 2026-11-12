@@ -368,7 +368,16 @@ fn get_backend_url(state: State<AppState>, session_id: String) -> Result<String,
 
 #[tauri::command]
 fn get_config() -> SidecarConfig {
-    load_state().config.unwrap_or_else(SidecarConfig::empty)
+    normalize_config(load_state().config.unwrap_or_else(SidecarConfig::empty))
+}
+
+/// 空 provider 回落 openai（与 PHP Config 默认一致）。
+/// 设置对话框的 select 只认合法 provider，空值会让保存必然失败。
+fn normalize_config(mut cfg: SidecarConfig) -> SidecarConfig {
+    if cfg.provider.is_empty() {
+        cfg.provider = "openai".into();
+    }
+    cfg
 }
 
 #[tauri::command]
@@ -475,6 +484,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_config_fills_empty_provider() {
+        let cfg = normalize_config(SidecarConfig::empty());
+        assert_eq!(cfg.provider, "openai", "空 provider 回落 openai");
+        assert_eq!(cfg.model, "", "其余字段保持为空");
+
+        let mut custom = SidecarConfig::empty();
+        custom.provider = "anthropic".into();
+        assert_eq!(normalize_config(custom).provider, "anthropic", "合法值透传");
+    }
 
     #[test]
     fn persisted_state_parses_config_field() {
