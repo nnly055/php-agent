@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { EmptyProjects, ProjectTabs } from "./components/layout/ProjectTabs";
@@ -66,6 +66,10 @@ export default function App() {
   const [booted, setBooted] = useState(false);
   const [booting, setBooting] = useState<string | null>(null);
 
+  // tabs 的渲染期镜像：backend 事件回调（effect 只挂一次）读取最新 tabs，避免闭包过期
+  const tabsRef = useRef<ProjectTab[]>([]);
+  tabsRef.current = tabs;
+
   // 项目标签打开（幂等：同一路径复用已有 tab）
   const openTab = useCallback((path: string, opened: OpenedSession) => {
     setTabs((prev) => {
@@ -105,7 +109,16 @@ export default function App() {
   useEffect(() => {
     let unlistens: Array<() => void> = [];
     onBackendEvent((e) => {
-      if (e.kind === "disconnected") {
+      if (e.kind === "ready") {
+        // 重启（保存配置/横幅重连）产生新 sessionId+端口：按 workspace 重绑 tab 与 store，
+        // 避免继续向旧会话/旧端口发请求。首开路径 tab.id 已一致，此处幂等 no-op。
+        const t = tabsRef.current.find((x) => x.path === e.workspace && x.id !== e.sessionId);
+        if (t) {
+          t.store.getState().setSessionId(e.sessionId);
+          t.store.getState().setBackend(`http://127.0.0.1:${e.port}`);
+          setTabs((prev) => prev.map((x) => (x === t ? { ...x, id: e.sessionId } : x)));
+        }
+      } else if (e.kind === "disconnected") {
         setTabs((prev) => {
           const t = prev.find((x) => x.id === e.sessionId);
           t?.store.getState().setConnected(false);
@@ -118,7 +131,6 @@ export default function App() {
           return prev;
         });
       }
-      // ready 事件由 openProject 的返回值直接处理，这里不重复建 tab
     }).then((fns) => { unlistens = fns; });
     return () => { unlistens.forEach((f) => f()); };
   }, []);
@@ -153,14 +165,17 @@ export default function App() {
         tab.store.getState().setSessionId(opened.sessionId);
         tab.store.getState().setError(null);
         // tab.id 变更会触发 ProjectWorkspace 的 refresh（重拉 status/sessions）
+        const wasActive = tab.id === activeId;
         setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, id: opened.sessionId } : t)));
+        // activeId 同步重绑：否则活跃 tab 换 id 后 activeTab 判空，界面回落到空项目页
+        if (wasActive) setActiveId(opened.sessionId);
       } catch (e: any) {
         tab.store.getState().setConnected(false);
         tab.store.getState().setError(e?.message ?? "重启失败");
       }
     }
     useUiStore.getState().setSettingsOpen(false);
-  }, [tabs]);
+  }, [tabs, activeId]);
 
   const closeTab = useCallback(async (tab: ProjectTab) => {
     try { await closeProject(tab.id); } catch { /* 进程可能已退出 */ }
