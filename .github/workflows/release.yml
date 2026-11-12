@@ -18,6 +18,10 @@ permissions:
 
 jobs:
   bundle:
+    # macOS-ARM job 在本账号 CI 上被系统性取消（零步骤即 cancel，疑为账号级 macOS
+    # runner 限制；macOS 本机构建已验证可用——v0.4.0 dmg 为本机产物）。
+    # continue-on-error 使其不阻塞 Linux/Windows 发版。
+    continue-on-error: ${{ matrix.os == 'macos-14' }}
     strategy:
       fail-fast: false
       matrix:
