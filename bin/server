@@ -19,6 +19,7 @@ use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\Kernel\PluginManager;
 use PhpAgent\Server\AgentServer;
 use PhpAgent\Server\ConfirmBroker;
+use PhpAgent\Server\ProfileRegistry;
 use React\EventLoop\Loop;
 use React\Http\HttpServer;
 use React\Socket\SocketServer;
@@ -31,6 +32,15 @@ $config = Config::load($root, true); // shell 权威：桌面壳注入的端口/
 
 $kernel = new AgentKernel($config);
 PluginManager::load($kernel, $root);
+
+// 全局凭据目录初值：来自启动 env 的单配置（default 档）；前端随后经 /config/profiles 热更新
+$registry = new ProfileRegistry($kernel);
+$registry->setProfiles([[
+    'id' => 'default', 'name' => $config->provider(), 'provider' => $config->provider(),
+    'baseUrl' => $config->baseUrl(), 'apiKey' => $config->apiKey(),
+    'models' => [$config->model() ?: ''],
+]], 'default');
+$kernel->setProfileRegistry($registry);
 
 $client = $kernel->provider($config->provider());
 
@@ -54,7 +64,7 @@ $loop = new AgentLoop(
 );
 
 $storeClass = get_class($kernel->sessionStore());
-$server = new AgentServer($loop, $kernel->sessionStore(), $hooks, $root . '/public', $config, $broker);
+$server = new AgentServer($loop, $kernel->sessionStore(), $hooks, $root . '/public', $config, $registry, $broker);
 
 $http = new HttpServer(Loop::get(), $server->handle(...));
 $port = $config->serverPort();

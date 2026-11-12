@@ -45,14 +45,28 @@ final class CompactPlugin implements Plugin
             $factory = $this->compactorFactory;
         } else {
             $providerId = $config->compactProvider();
-            if ($providerId === '' || !$kernel->hasProvider($providerId)) {
-                $providerId = $config->provider();
+            if ($providerId !== '' && $kernel->hasProvider($providerId)) {
+                $factory = static fn (): Compactor => new Compactor(
+                    $kernel->provider($providerId),
+                    $contextTokens,
+                    $threshold,
+                );
+            } else {
+                // 未显式指定压缩 provider：跟随当前对话生效的 profile client（per-turn 切换后压缩同源）
+                $registry = $kernel->profileRegistry();
+                $fallbackId = $config->provider();
+                $factory = $registry !== null
+                    ? static fn (): Compactor => new Compactor(
+                        $registry->activeClient() ?? $kernel->provider($fallbackId),
+                        $contextTokens,
+                        $threshold,
+                    )
+                    : static fn (): Compactor => new Compactor(
+                        $kernel->provider($fallbackId),
+                        $contextTokens,
+                        $threshold,
+                    );
             }
-            $factory = static fn (): Compactor => new Compactor(
-                $kernel->provider($providerId),
-                $contextTokens,
-                $threshold,
-            );
         }
 
         $kernel->addHook(new CompactHook($factory, $contextTokens, $threshold));
