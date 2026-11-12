@@ -97,4 +97,37 @@ final class ServerApiTest extends TestCase
             @rmdir($dir);
         }
     }
+
+    public function testConfigTestFakeProviderReturnsOk(): void
+    {
+        $resp = $this->server()->handle(new ServerRequest('POST', 'http://localhost/config/test', [], json_encode([
+            'provider' => 'fake', 'api_key' => '', 'base_url' => '', 'model' => '',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $resp->getStatusCode());
+        $body = json_decode((string) $resp->getBody(), true);
+        self::assertTrue($body['ok']);
+        self::assertArrayHasKey('latency_ms', $body);
+        self::assertArrayHasKey('message', $body);
+    }
+
+    public function testConfigTestRejectsUnknownProvider(): void
+    {
+        $resp = $this->server()->handle(new ServerRequest('POST', 'http://localhost/config/test', [], json_encode([
+            'provider' => 'nope',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(400, $resp->getStatusCode());
+        $body = json_decode((string) $resp->getBody(), true);
+        self::assertStringContainsStringIgnoringCase('provider', $body['error']);
+    }
+
+    public function testConfigTestOpenAiWithoutModelFailsFast(): void
+    {
+        $resp = $this->server()->handle(new ServerRequest('POST', 'http://localhost/config/test', [], json_encode([
+            'provider' => 'openai', 'api_key' => 'sk-x',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $resp->getStatusCode());
+        $body = json_decode((string) $resp->getBody(), true);
+        self::assertFalse($body['ok']);
+        self::assertStringContainsString('模型', $body['message']);
+    }
 }
