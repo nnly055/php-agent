@@ -31,6 +31,11 @@ final class OpenAICompatClient extends BaseSseClient
             ),
         ];
 
+        // per-model maxTokens：显式设置才发送（未设置的端点保持原有行为，避免服务端拒绝或改变语义）
+        if ($this->config->maxTokensExplicit()) {
+            $body['max_tokens'] = $this->config->maxTokens();
+        }
+
         $url = $this->config->baseUrl() . '/chat/completions';
         $headers = ['Authorization: Bearer ' . $this->config->apiKey()];
 

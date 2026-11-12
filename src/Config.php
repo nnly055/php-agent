@@ -91,6 +91,12 @@ final class Config
         return max(1024, (int) ($this->env['AGENT_MAX_TOKENS'] ?? 8192));
     }
 
+    /** AGENT_MAX_TOKENS 是否被显式设置（per-model 参数只在显式时发送给 openai 兼容端点） */
+    public function maxTokensExplicit(): bool
+    {
+        return isset($this->env['AGENT_MAX_TOKENS']);
+    }
+
     public function maxIterations(): int
     {
         return max(1, (int) ($this->env['AGENT_MAX_ITERATIONS'] ?? 25));
