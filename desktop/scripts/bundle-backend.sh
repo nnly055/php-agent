@@ -96,3 +96,9 @@ done
 
 SIZE="$(du -sh "$DEST" | cut -f1)"
 echo "✓ PHP 后端已打包: $DEST ($SIZE)"
+# ── 4) macOS：php 重新 ad-hoc 签名 ────────────────────────────
+# 静态 php 是 linker-signed；陈旧签名可能被 macOS 安全策略（syspolicyd）卡死 exec——
+# 进程在内核不可杀地挂起、无任何输出（2026-11-12 事故）。bundle 后重签触发全新鉴定。
+if [ "$(uname)" = "Darwin" ]; then
+  codesign --force --sign - "$DEST/php" && echo "✓ php ad-hoc 重签完成"
+fi

@@ -137,6 +137,18 @@ fn resolve_backend(app: &tauri::AppHandle) -> (String, PathBuf) {
                 use std::os::unix::fs::PermissionsExt;
                 let _ = std::fs::set_permissions(&php, std::fs::Permissions::from_mode(0o755));
             }
+            // macOS：静态 php 是 linker-signed，陈旧签名可能被安全策略（syspolicyd）
+            // 卡死 exec——进程在内核不可杀地挂起、无任何输出（2026-11-12 事故，重签即解锁）。
+            // 每次解析后重签 ad-hoc 触发全新鉴定；codesign 是系统平台二进制，自身不受影响。
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("codesign")
+                    .args(["--force", "--sign", "-"])
+                    .arg(&php)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
             return (php.to_string_lossy().to_string(), bundled);
         }
     }
