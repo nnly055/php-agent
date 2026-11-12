@@ -10,7 +10,13 @@ export function useAgentStream() {
     const st = store.getState();
     if (st.streaming || !text.trim()) return;
     const sessionId = st.activeSession || `web-${Date.now().toString(36)}`;
-    if (!st.activeSession) store.getState().setActiveSession(sessionId);
+    if (!st.activeSession) {
+      store.getState().setActiveSession(sessionId);
+      // setActiveSession 会重置选择：新会话不丢用户发送前已选的档/模型（空则保持重置态=继承默认档）
+      if (st.selection.profileId || st.selection.model) {
+        store.getState().setSelection(st.selection);
+      }
+    }
     store.getState().beginTurn(text);
     const ac = new AbortController();
     // store.streamAbort 为唯一来源：切会话（setActiveSession）会 abort 它防跨会话串数据。
