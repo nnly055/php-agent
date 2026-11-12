@@ -16,11 +16,12 @@ export const getWorkspace = (sessionId: string) => invoke<string>("get_workspace
 export const restartSession = (sessionId: string) =>
   invoke<OpenedSession>("restart_session", { sessionId });
 
-/** 全局 API 配置（desktop.json 顶层 config 字段；camelCase 与后端序列化对齐） */
-export type AgentConfig = { provider: string; apiKey: string; baseUrl: string; model: string };
-export const getConfig = () => invoke<AgentConfig>("get_config");
-export const saveConfig = (cfg: AgentConfig) =>
-  invoke<void>("save_config", { provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model });
+/** 一个平台档：name 供 UI 显示；models 为该平台可选模型列表（首个为默认）；camelCase 与后端序列化对齐 */
+export type Profile = { id: string; name: string; provider: string; apiKey: string; baseUrl: string; models: string[] };
+export type ProfilesPayload = { profiles: Profile[]; defaultProfile: string; defaultModel: string };
+export const getProfiles = () => invoke<ProfilesPayload>("get_profiles");
+export const saveProfiles = (payload: ProfilesPayload) =>
+  invoke<void>("save_profiles", { profiles: payload.profiles, defaultProfile: payload.defaultProfile, defaultModel: payload.defaultModel });
 
 export type BackendEvent =
   | { kind: "ready"; sessionId: string; port: number; workspace: string }

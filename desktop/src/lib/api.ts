@@ -19,7 +19,7 @@ export type Status = {
   provider: string; model: string; workspace: string; permissions: string;
   sessionStore: string; mcp: boolean; version: string; maxIterations: number;
 };
-export type SessionMeta = { id: string; title: string; createdAt: number; updatedAt: number; messageCount: number };
+export type SessionMeta = { id: string; title: string; createdAt: number; updatedAt: number; messageCount: number; profileId?: string | null; model?: string | null };
 
 export const getStatus = (baseUrl: string, signal?: AbortSignal) => json<Status>(baseUrl, "/status", { signal });
 
@@ -30,18 +30,30 @@ export const testConfig = (baseUrl: string, cfg: { provider: string; apiKey: str
     method: "POST",
     body: JSON.stringify({ provider: cfg.provider, api_key: cfg.apiKey, base_url: cfg.baseUrl, model: cfg.model }),
   });
+/** POST /config/profiles：向运行中的 sidecar 热更新凭据目录（旧内核 404 → 由调用方提示重启生效） */
+export const pushProfiles = (baseUrl: string, payload: { profiles: unknown[]; defaultProfile: string }) =>
+  json<{ ok: boolean }>(baseUrl, "/config/profiles", { method: "POST", body: JSON.stringify(payload) });
 export const listSessions = (baseUrl: string, limit = 50) => json<{ sessions: SessionMeta[] }>(baseUrl, `/sessions?limit=${limit}`);
-export const loadSession = (baseUrl: string, id: string) => json<{ id: string; messages: any[] }>(baseUrl, `/sessions/${encodeURIComponent(id)}`);
+export const loadSession = (baseUrl: string, id: string) =>
+  json<{ id: string; messages: any[]; meta?: { profileId?: string | null; model?: string | null } | null }>(baseUrl, `/sessions/${encodeURIComponent(id)}`);
 export const deleteSession = (baseUrl: string, id: string) => json<{ ok: boolean }>(baseUrl, `/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const confirm = (baseUrl: string, id: string, decision: "y" | "n" | "a") =>
   json<{ ok: boolean }>(baseUrl, `/confirm/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ decision }) });
 
+/** 本轮对话的模型选择：均缺省 → 沿用后端默认档（线上不携带对应键） */
+export type TurnSelection = { profileId?: string | null; model?: string | null };
+
 /** POST /agent → SSE 事件异步迭代器 */
-export async function* agentStream(baseUrl: string, message: string, sessionId: string, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+export async function* agentStream(baseUrl: string, message: string, sessionId: string, signal?: AbortSignal, selection?: TurnSelection): AsyncGenerator<AgentEvent> {
   const resp = await fetch(baseUrl + "/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      ...(selection?.profileId ? { profile_id: selection.profileId } : {}),
+      ...(selection?.model ? { model: selection.model } : {}),
+    }),
     signal,
   });
   if (!resp.ok || !resp.body) {
