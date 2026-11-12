@@ -163,6 +163,7 @@ fn open_session_inner(
         &backend_cwd,
         workspace,
         Some(&session_dir.to_string_lossy()),
+        None, // TODO(Task 4): 接入全局配置 global_cfg.as_ref()
     ) {
         Ok(sc) => {
             let port = sc.port();

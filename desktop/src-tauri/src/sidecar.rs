@@ -12,6 +12,28 @@ pub fn parse_port_line(line: &str) -> Option<u16> {
     rest.trim().parse::<u16>().ok()
 }
 
+/// 桌面壳管理的全局 API 配置（存 ~/.php-agent/desktop.json 顶层 config 字段）。
+/// camelCase 与前端 AgentConfig 字段对齐；启动 sidecar 时逐项注入 AGENT_*，空值不注入。
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SidecarConfig {
+    pub provider: String,
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+}
+
+impl SidecarConfig {
+    pub fn empty() -> Self {
+        Self {
+            provider: String::new(),
+            api_key: String::new(),
+            base_url: String::new(),
+            model: String::new(),
+        }
+    }
+}
+
 pub struct Sidecar {
     child: Child,
     port: u16,
@@ -61,11 +83,13 @@ impl Sidecar {
     /// `cwd` 为内核代码根（bundled 资源目录或项目根），`bin/server` 的
     /// `$root = dirname(__DIR__)` 由此确定，plugins/public/vendor 全在其中。
     /// `session_dir` 为空则不注入 AGENT_SESSION_DIR（PHP 侧用默认 ~/.php-agent/sessions）。
+    /// `config` 为全局 API 配置（Some 时逐项注入 AGENT_PROVIDER 等，空字段跳过，保留 .env 兜底）。
     pub fn start_with_env(
         php_bin: &str,
         cwd: &Path,
         workspace: &str,
         session_dir: Option<&str>,
+        config: Option<&SidecarConfig>,
     ) -> Result<Sidecar, String> {
         let mut cmd = Command::new(php_bin);
         cmd.arg("bin/server")
@@ -76,6 +100,22 @@ impl Sidecar {
             .env("AGENT_UI", "server")
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+
+        // 全局配置注入（shell 权威：getenv 即最终值）；空字段不注入，保留 .env/系统 env 兜底
+        if let Some(cfg) = config {
+            if !cfg.provider.is_empty() {
+                cmd.env("AGENT_PROVIDER", &cfg.provider);
+            }
+            if !cfg.api_key.is_empty() {
+                cmd.env("AGENT_API_KEY", &cfg.api_key);
+            }
+            if !cfg.base_url.is_empty() {
+                cmd.env("AGENT_BASE_URL", &cfg.base_url);
+            }
+            if !cfg.model.is_empty() {
+                cmd.env("AGENT_MODEL", &cfg.model);
+            }
+        }
 
         if let Some(dir) = session_dir {
             cmd.env("AGENT_SESSION_DIR", dir);
@@ -219,8 +259,8 @@ mod tests {
         std::env::set_var("AGENT_SESSION_STORE", "memory");
         let ws = std::env::temp_dir().join(format!("php-agent-sc-test-{}", std::process::id()));
         std::fs::create_dir_all(&ws).unwrap();
-        let mut sc =
-            Sidecar::start_with_env("php", &root, &ws.to_string_lossy(), None).expect("sidecar should start");
+        let mut sc = Sidecar::start_with_env("php", &root, &ws.to_string_lossy(), None, None)
+            .expect("sidecar should start");
         assert!(sc.port() > 0, "port should be assigned");
         assert!(
             sc.is_alive(),
@@ -255,6 +295,7 @@ mod tests {
             &root,
             &ws1.to_string_lossy(),
             Some(&sd1.to_string_lossy()),
+            None,
         )
         .expect("sidecar A should start");
         let mut b = Sidecar::start_with_env(
@@ -262,6 +303,7 @@ mod tests {
             &root,
             &ws2.to_string_lossy(),
             Some(&sd2.to_string_lossy()),
+            None,
         )
         .expect("sidecar B should start");
 
@@ -286,5 +328,39 @@ mod tests {
         assert!(!a.is_alive() && !b.is_alive());
         std::fs::remove_dir_all(&ws1).ok();
         std::fs::remove_dir_all(&ws2).ok();
+    }
+
+    /// 注入的 config env 必须覆盖 shell 层同名变量（cmd.env 直接写进程 environ）。
+    #[test]
+    fn sidecar_injects_config_env() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        std::env::set_var("AGENT_SESSION_STORE", "memory");
+        std::env::set_var("AGENT_MODEL", "shell-model"); // shell 层同名值，应被注入覆盖
+        let ws = std::env::temp_dir().join(format!("php-agent-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let cfg = SidecarConfig {
+            provider: "fake".into(),
+            api_key: String::new(),
+            base_url: String::new(),
+            model: "cfg-model".into(),
+        };
+        let mut sc = Sidecar::start_with_env("php", &root, &ws.to_string_lossy(), None, Some(&cfg))
+            .expect("sidecar should start");
+        use std::io::{Read, Write};
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", sc.port())).unwrap();
+        stream
+            .write_all(b"GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut buf = String::new();
+        let _ = stream.read_to_string(&mut buf);
+        assert!(buf.contains("\"model\":\"cfg-model\""), "注入的 model 应生效: {buf}");
+        sc.stop();
+        std::fs::remove_dir_all(&ws).ok();
     }
 }
