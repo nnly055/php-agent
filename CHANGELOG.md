@@ -7,6 +7,24 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-12
+
+### 修复
+
+- **多平台 CI 构建**（release.yml，四平台矩阵）
+  - tauri-action 在无 tag 验证模式下跳过构建（0.3s 假成功）→ 验证模式显式
+    `npm run tauri build`，产物 upload-artifact 供下载；发版模式（推 tag / dispatch 带 tag）
+    走 tauri-action 自动挂 Release
+  - Linux：bundle 缓存目录预创建（首跑 cp 失败）
+  - Windows：static-php 官方无 Windows 产物 → 用系统 PHP（`SKIP_STATIC_PHP=1`，
+    Rust resolve_backend 自动回退）；Git Bash 的 `cp -R` 对 vendor 静默丢文件
+    （47M→2.4M）→ 改 tar 管道 + react/http 完整性抽查；`/d/...` MSYS 路径
+    原生 php.exe 不识别 → 冒烟路径 `cygpath -m` 转换
+  - macOS-ARM job `continue-on-error`（本账号 CI 的 macOS runner 被系统性取消，
+    疑账号级限制；macOS 构建已在本机验证，v0.4.0 dmg 为本机产物）；Intel runner
+    免费池已下线，矩阵注释保留恢复方法
+  - 实测：Linux AppImage+deb（103MB artifact）、Windows msi+nsis 构建成功
+
 ## [0.4.0] - 2026-11-12
 
 > 桌面壳多项目管理（每项目一进程）+ 打包分发（免系统 PHP 依赖）。
@@ -229,7 +247,8 @@
 - 端到端（fake provider）：写文件 → 运行 `php demo/hello.php` → 输出 `Hello from PHP Agent!`（exit 0）
 - SSE 服务：`POST /agent` 完整事件流（tool_use → result 回填 → 流式文本 → final 帧）
 
-[Unreleased]: https://github.com/nnly055/php-agent/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nnly055/php-agent/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/nnly055/php-agent/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nnly055/php-agent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nnly055/php-agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nnly055/php-agent/compare/v0.1.0...v0.2.0
