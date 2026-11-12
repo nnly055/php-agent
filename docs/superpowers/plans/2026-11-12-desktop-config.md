@@ -50,7 +50,8 @@
         self::assertSame('sk-test', $c->apiKey());
         self::assertSame('https://example.com', $c->baseUrl());
         self::assertSame('claude-sonnet-4-5', $c->model());
-        self::assertSame(16, $c->maxTokens());
+        // maxTokens 有 max(1024, …) 下限：传 16 实际生效 1024（压低默认 8192，即 /config/test 的成本控制手段）
+        self::assertSame(1024, $c->maxTokens());
     }
 
     public function testFromArrayEmptyFallsBackToDefaults(): void
@@ -193,6 +194,7 @@ use PhpAgent\LLM\OpenAICompatClient;
             'AGENT_API_KEY' => trim((string) ($body['api_key'] ?? '')),
             'AGENT_BASE_URL' => trim((string) ($body['base_url'] ?? '')),
             'AGENT_MODEL' => trim((string) ($body['model'] ?? '')),
+            // maxTokens 下限 1024：压低默认 8192，控制 ping 成本
             'AGENT_MAX_TOKENS' => '16',
         ]);
         if ($provider === 'fake') {
