@@ -53,11 +53,12 @@ final class CompactPlugin implements Plugin
                 );
             } else {
                 // 未显式指定压缩 provider：跟随当前对话生效的 profile client（per-turn 切换后压缩同源）。
-                // registry 查找同样推迟到压缩时刻：bin/server 在插件注册之后才挂载 registry，register 时必为 null
+                // registry 查找同样推迟到压缩时刻：bin/server 在插件注册之后才挂载 registry，register 时必为 null。
+                // contextTokens 同时刻求值：跟随当前对话模型的 per-model contextTokens（未解析/未设置回落全局值）。
                 $fallbackId = $config->provider();
                 $factory = static fn (): Compactor => new Compactor(
                     $kernel->profileRegistry()?->activeClient() ?? $kernel->provider($fallbackId),
-                    $contextTokens,
+                    $kernel->profileRegistry()?->activeContextTokens() ?? $contextTokens,
                     $threshold,
                 );
             }

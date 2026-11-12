@@ -10,6 +10,7 @@ use PhpAgent\LLM\FakeLLMClient;
 use PhpAgent\LLM\StreamEvent;
 use PhpAgent\Plugin\Compact\CompactPlugin;
 use PhpAgent\Plugin\Compact\Compactor;
+use PhpAgent\Server\ProfileRegistry;
 use PHPUnit\Framework\TestCase;
 
 // 插件类不经 composer autoload（项目插件由 plugin.php require），测试中显式引入
@@ -175,5 +176,91 @@ final class CompactPluginTest extends TestCase
         $out = $kernel->command('compact')->execute([], $ctx);
         self::assertStringContainsString('无需压缩', $out);
         self::assertCount(2, $messages);
+    }
+
+    // ── 跟随分支（未显式指定压缩 provider）：contextTokens 压缩时刻经 registry 求值 ──
+
+    protected function tearDown(): void
+    {
+        // 清理 followModeKernel 设置的环境变量，避免泄漏到同进程的其他测试
+        putenv('AGENT_PROVIDER');
+        putenv('AGENT_COMPACT_PROVIDER');
+        putenv('AGENT_CONTEXT_TOKENS');
+    }
+
+    /**
+     * 跟随分支真实注册路径：无注入工厂，插件自行装配（生产装配形态）。
+     * AGENT_PROVIDER=fake 供 provider 回落；AGENT_COMPACT_PROVIDER 置空确保走跟随分支。
+     * 注意插件注册先于 registry 挂载（bin/server 时序），工厂必须把 registry 查找推迟到压缩时刻。
+     */
+    private function followModeKernel(int $globalContextTokens): AgentKernel
+    {
+        putenv('AGENT_WORKSPACE=' . sys_get_temp_dir());
+        putenv('AGENT_PROVIDER=fake');
+        putenv('AGENT_COMPACT_PROVIDER=');
+        putenv("AGENT_CONTEXT_TOKENS={$globalContextTokens}");
+        $kernel = new AgentKernel(\PhpAgent\Config::load(sys_get_temp_dir()));
+        $kernel->registerProvider('fake', static fn (): \PhpAgent\LLM\LLMClient => new FakeLLMClient([
+            [StreamEvent::text('早期完成了若干任务。'), StreamEvent::end('end_turn')],
+        ]));
+        (new CompactPlugin())->register($kernel);
+        return $kernel;
+    }
+
+    private function fireBeforeLlm(AgentKernel $kernel, array &$messages, array &$notes): void
+    {
+        $payload = ['messages' => &$messages, 'notes' => &$notes, 'system' => 'sys', 'iteration' => 1];
+        HookPipeline::fire($kernel->hooks(), 'before_llm_request', $payload);
+    }
+
+    public function testFollowModeCompactsAtPerModelContextTokens(): void
+    {
+        // 模型条目 contextTokens=500 → 压缩时刻经 registry 求值；注册时全局值 1000000 仅是回落候选
+        $kernel = $this->followModeKernel(1_000_000);
+        $registry = new ProfileRegistry($kernel);
+        $kernel->setProfileRegistry($registry); // 镜像 bin/server：插件注册之后才挂载 registry
+        $registry->setProfiles([
+            ['id' => 'p1', 'name' => '平台一', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '',
+                'models' => [['name' => 'm1', 'contextTokens' => 500]]],
+        ], 'p1');
+        $registry->setActiveClient($registry->resolve('p1', 'm1')); // 镜像 AgentServer per-turn 接线
+        self::assertSame(500, $registry->activeContextTokens());
+
+        $messages = $this->bigHistory();
+        $notes = [];
+        $this->fireBeforeLlm($kernel, $messages, $notes);
+
+        // per-model 500 × 0.8 = 400 触发压缩；若误用全局 1000000（阈值 800000）则不会压缩
+        self::assertCount(3, $messages);
+        self::assertStringContainsString('<context-summary>', $messages[0]['content'][0]['text']);
+        self::assertCount(1, $notes);
+    }
+
+    public function testFollowModeFallsBackToGlobalContextTokensWhenNothingResolved(): void
+    {
+        // registry 已挂载但从未 resolve → activeContextTokens() 为 null → 回落注册时全局值
+        $kernel = $this->followModeKernel(600);
+        $kernel->setProfileRegistry(new ProfileRegistry($kernel));
+
+        $messages = $this->bigHistory();
+        $notes = [];
+        $this->fireBeforeLlm($kernel, $messages, $notes);
+
+        // 全局 600 × 0.8 = 480 ≤ 估算（约 1300）→ 压缩发生，证明全局值（而非默认 128000）流入 Compactor
+        self::assertCount(3, $messages);
+        self::assertCount(1, $notes);
+    }
+
+    public function testFollowModeWithoutRegistryFallsBackToGlobalContextTokens(): void
+    {
+        // 未挂载 registry（profileRegistry() 为 null 的 ?-> 路径）→ 同样回落全局值
+        $kernel = $this->followModeKernel(600);
+
+        $messages = $this->bigHistory();
+        $notes = [];
+        $this->fireBeforeLlm($kernel, $messages, $notes);
+
+        self::assertCount(3, $messages);
+        self::assertCount(1, $notes);
     }
 }
