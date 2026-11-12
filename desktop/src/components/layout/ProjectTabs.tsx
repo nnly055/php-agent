@@ -1,4 +1,4 @@
-import { FolderOpen, FolderPlus, Plus, X } from "lucide-react";
+import { FolderOpen, FolderPlus, Plus, Settings, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 /** 顶部项目标签条：已打开项目 = 标签（可关闭），「+」添加新项目，折叠列表恢复已添加项目。 */
@@ -92,11 +92,13 @@ export function EmptyProjects({
   booting,
   onAdd,
   onOpen,
+  onConfigure,
 }: {
   projects: string[];
   booting: string | null;
   onAdd: () => void;
   onOpen: (path: string) => void;
+  onConfigure: () => void;
 }) {
   return (
     <div className="grid h-full place-items-center">
@@ -127,6 +129,12 @@ export function EmptyProjects({
           onClick={onAdd}
         >
           <Plus size={16} /> 添加项目目录
+        </button>
+        <button
+          className="flex items-center gap-2 rounded-lg border border-border bg-surface px-5 py-2.5 text-sm text-muted transition-colors hover:border-primary hover:text-ink"
+          onClick={onConfigure}
+        >
+          <Settings size={16} /> 配置 API
         </button>
         <p className="text-xs text-muted">选择一个项目目录，agent 的文件操作与命令都限定在该目录内。</p>
       </div>

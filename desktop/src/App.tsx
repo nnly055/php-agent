@@ -211,6 +211,7 @@ export default function App() {
             booting={booting}
             onAdd={addProject}
             onOpen={(path) => openPath(path)}
+            onConfigure={() => useUiStore.getState().setSettingsOpen(true)}
           />
         ) : (
           <div className="grid h-full place-items-center animate-pulse font-mono text-sm text-muted">正在启动…</div>

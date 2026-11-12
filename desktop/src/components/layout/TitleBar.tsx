@@ -1,6 +1,7 @@
 import { useProjectStore } from "../../store/useProjectStore";
 import { Badge } from "../ui/badge";
 import { Cpu, FolderGit2, ShieldCheck, ShieldOff } from "lucide-react";
+import { useUiStore } from "../../store/useUiStore";
 
 export function TitleBar() {
   const store = useProjectStore();
@@ -17,9 +18,19 @@ export function TitleBar() {
       </span>
       <div className="ml-auto flex items-center gap-2">
         {status && (
-          <Badge variant="outline" className="gap-1 border-border font-mono text-[11px] text-muted">
-            <Cpu size={12} /> {status.provider}/{status.model || "未配置"}
-          </Badge>
+          <button
+            type="button"
+            onClick={() => useUiStore.getState().setSettingsOpen(true)}
+            title="配置 API"
+            className="cursor-pointer"
+          >
+            <Badge
+              variant="outline"
+              className={`gap-1 border-border font-mono text-[11px] ${status.model ? "text-muted" : "text-warning"}`}
+            >
+              <Cpu size={12} /> {status.provider}/{status.model || "未配置"}
+            </Badge>
+          </button>
         )}
         {status && (
           <Badge variant="outline" className="gap-1 border-border text-[11px] text-muted">
