@@ -68,11 +68,12 @@ elif [ ! -x "$PHP_BIN" ] || [ "${FORCE_PHP:-0}" = "1" ]; then
 fi
 
 # ── 2) 内核代码目录（保留 plugins/public/vendor 结构，插件发现零改动）──
-# Windows（Git Bash）无 rsync，用 cp -R；rm -rf 先清实现覆盖语义
+# 用 tar 管道拷贝：Git Bash 的 cp -R 对 vendor 深层大目录会静默丢文件
+# （实测 Windows 上 47M→2.4M），tar 在 macOS/Linux/Git Bash 行为一致且校验可靠
 rm -rf "$DEST/src" "$DEST/bin" "$DEST/plugins" "$DEST/public" "$DEST/vendor" \
        "$DEST/composer.json" "$DEST/composer.lock"
 for item in src bin plugins public vendor composer.json composer.lock; do
-  cp -R "$ROOT/$item" "$DEST/$item"
+  tar -cf - -C "$ROOT" "$item" | tar -xf - -C "$DEST"
 done
 
 # ── 3) 冒烟验证：二进制可执行 + autoload 可用 + 必需扩展 ──────
@@ -82,6 +83,8 @@ done
 SMOKE_DEST="$DEST"
 command -v cygpath >/dev/null 2>&1 && SMOKE_DEST="$(cygpath -m "$DEST")"
 "$PHP_BIN" -r 'require "'"$SMOKE_DEST"'/vendor/autoload.php"; echo class_exists("PhpAgent\\Config") ? "autoload-ok" : exit(1), "\n";'
+# vendor 完整性抽查：autoload-ok 只证明脚手架存在，再抽查一个真实包文件防静默丢文件
+[ -f "$DEST/vendor/react/http/src/HttpServer.php" ] || { echo "✗ vendor 拷贝不完整（react/http 缺失）"; exit 1; }
 # 注意：不能用 `php -m | grep -q`——pipefail 下 grep 提前退出会吃掉 php 的 SIGPIPE 变成 race 失败，先落变量再匹配
 MODULES="$("$PHP_BIN" -m 2>&1)"
 for ext in curl mbstring sqlite3; do
