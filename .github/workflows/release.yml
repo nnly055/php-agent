@@ -66,19 +66,26 @@ jobs:
         env:
           SKIP_STATIC_PHP: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
 
-      - name: 构建 Tauri 应用
+      # tauri-action 在无 tag/不发布时直接跳过构建（0.3s 假成功）——
+      # 验证模式必须显式跑 tauri build，产物由上面的 upload-artifact 步骤收集
+      - name: 构建 Tauri 应用（验证模式）
+        if: ${{ !((startsWith(github.ref, 'refs/tags/') && github.ref_name != '') || inputs.tag != '') }}
+        run: npm run tauri build
+        working-directory: desktop
+
+      - name: 构建 Tauri 应用并挂载 Release（发版模式）
+        if: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name != '') || inputs.tag != '' }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop
           tauriScript: npm run tauri
-          tagName: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag || '' }}
-          releaseName: "PHP Agent ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag || '' }}"
+          tagName: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag }}
+          releaseName: "PHP Agent ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag }}"
           releaseBody: "各平台安装包：macOS（Apple Silicon / Intel dmg）、Linux（AppImage / deb）、Windows（msi / nsis 安装器）。内置静态 PHP 运行时，无需安装 PHP。"
           releaseDraft: false
           prerelease: false
-          includeRelease: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name != '') || inputs.tag != '' }}
           includeDebug: false
 
       # dispatch 验证模式（无 tag）下 tauri-action 不发布，显式上传产物供下载验收
