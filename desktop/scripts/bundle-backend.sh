@@ -13,48 +13,61 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)" # desktop/scripts → 项目根
 DEST="$ROOT/desktop/src-tauri/resources/php-agent"
 
 PHP_VERSION="${PHP_VERSION:-8.2.31}"
-PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')" # darwin | linux
+# 平台识别：GitHub Actions 的 windows runner（Git Bash）uname -s 形如 MINGW64_NT-*
+case "$(uname -s)" in
+  Darwin) PLATFORM=darwin ;;
+  Linux)  PLATFORM=linux ;;
+  MINGW*|MSYS*|CYGWIN*) PLATFORM=windows ;;
+  *) PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')" ;;
+esac
 ARCH="$(uname -m)"
 [ "$ARCH" = "arm64" ] && ARCH=aarch64
-[ "$ARCH" = "x86_64" ] && ARCH=x86_64
-# linux/x86_64 的产物名是 x86_64；mac 是 aarch64
-URL="https://dl.static-php.dev/static-php-cli/common/php-${PHP_VERSION}-cli-${PLATFORM}-${ARCH}.tar.gz"
+IS_WINDOWS=0; [ "$PLATFORM" = "windows" ] && IS_WINDOWS=1
+# windows 产物是 zip（内含 php.exe），其余平台 tar.gz（内含 php）
+EXT=tar.gz; [ "$IS_WINDOWS" = "1" ] && EXT=zip
+URL="https://dl.static-php.dev/static-php-cli/common/php-${PHP_VERSION}-cli-${PLATFORM}-${ARCH}.${EXT}"
 
 mkdir -p "$DEST"
 
 # ── 1) 静态 php 二进制 ────────────────────────────────────────
-PHP_BIN="$DEST/php"
+PHP_NAME=php; [ "$IS_WINDOWS" = "1" ] && PHP_NAME=php.exe
+PHP_BIN="$DEST/$PHP_NAME"
 CACHE="$HOME/.cache/php-agent-desktop/php-${PHP_VERSION}-${PLATFORM}-${ARCH}"
 if [ ! -x "$PHP_BIN" ] || [ "${FORCE_PHP:-0}" = "1" ]; then
-  if [ -x "$CACHE" ]; then
+  if [ -x "$CACHE" ] || [ -f "$CACHE" ]; then
     echo "▸ 使用缓存: $CACHE"
     cp "$CACHE" "$PHP_BIN"
   else
     echo "▸ 获取静态 PHP ${PHP_VERSION} (${PLATFORM}-${ARCH})..."
     ok=0
     for i in 1 2 3; do
-      curl -sL --retry 3 -m 300 -o /tmp/static-php.tar.gz "$URL" || true
-      # 站点偶发返回 Cloudflare HTML，必须验证是可执行 ELF/Mach-O 再采用
-      if file "$PHP_BIN.tmp" >/dev/null 2>&1; then :; fi
-      tar xzf /tmp/static-php.tar.gz -C /tmp/static-php-extract 2>/dev/null || { rm -f /tmp/static-php.tar.gz; continue; }
-      if [ -x /tmp/static-php-extract/php ]; then
-        mkdir -p "$(dirname "$CACHE")" && cp /tmp/static-php-extract/php "$CACHE"
-        ok=1; break
+      curl -sL --retry 3 -m 300 -o /tmp/static-php.$EXT "$URL" || true
+      rm -rf /tmp/static-php-extract && mkdir -p /tmp/static-php-extract
+      # 站点偶发返回 Cloudflare HTML，必须验证解包产物是可执行文件再采用
+      if [ "$EXT" = "zip" ]; then
+        unzip -o -q /tmp/static-php.$EXT -d /tmp/static-php-extract 2>/dev/null || { rm -f /tmp/static-php.$EXT; continue; }
+        EXE=$(find /tmp/static-php-extract -name 'php.exe' | head -1)
+        [ -n "$EXE" ] && cp "$EXE" /tmp/static-php-extract/php.exe && ok=1 && break
+      else
+        tar xzf /tmp/static-php.$EXT -C /tmp/static-php-extract 2>/dev/null || { rm -f /tmp/static-php.$EXT; continue; }
+        [ -x /tmp/static-php-extract/php ] && ok=1 && break
       fi
       sleep 2
     done
     [ "$ok" = "1" ] || { echo "✗ 静态 PHP 下载失败（重试已耗尽）: $URL"; exit 1; }
+    cp /tmp/static-php-extract/$PHP_NAME "$CACHE" 2>/dev/null || cp /tmp/static-php-extract/php "$CACHE"
     cp "$CACHE" "$PHP_BIN"
   fi
 fi
-chmod 755 "$PHP_BIN"
+[ "$IS_WINDOWS" = "0" ] && chmod 755 "$PHP_BIN"
 
 # ── 2) 内核代码目录（保留 plugins/public/vendor 结构，插件发现零改动）──
+# Windows（Git Bash）无 rsync，用 cp -R；rm -rf 先清实现覆盖语义
 rm -rf "$DEST/src" "$DEST/bin" "$DEST/plugins" "$DEST/public" "$DEST/vendor" \
        "$DEST/composer.json" "$DEST/composer.lock"
-rsync -a --exclude '.git' --exclude 'tests' --exclude 'docs' \
-  "$ROOT/src" "$ROOT/bin" "$ROOT/plugins" "$ROOT/public" \
-  "$ROOT/vendor" "$ROOT/composer.json" "$ROOT/composer.lock" "$DEST/"
+for item in src bin plugins public vendor composer.json composer.lock; do
+  cp -R "$ROOT/$item" "$DEST/$item"
+done
 
 # ── 3) 冒烟验证：二进制可执行 + autoload 可用 + 必需扩展 ──────
 "$PHP_BIN" -v | head -1

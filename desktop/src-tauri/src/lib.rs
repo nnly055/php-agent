@@ -22,9 +22,15 @@ struct AppState {
     project_root: PathBuf,
 }
 
+/// 用户主目录：macOS/Linux 用 HOME，Windows 用 USERPROFILE
+fn home_dir() -> String {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into())
+}
+
 fn desktop_json_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".php-agent").join("desktop.json")
+    PathBuf::from(home_dir()).join(".php-agent").join("desktop.json")
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -75,8 +81,7 @@ fn save_state(projects: &[String], last_session: &str, last_workspace: &str) {
 
 /// 每项目独立的会话存储目录：~/.php-agent/projects/<slug>/sessions
 fn session_dir_for(workspace: &str) -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home)
+    PathBuf::from(home_dir())
         .join(".php-agent")
         .join("projects")
         .join(project_slug(workspace))
@@ -98,7 +103,8 @@ fn resolve_backend(app: &tauri::AppHandle) -> (String, PathBuf) {
     }
     if let Ok(res) = app.path().resource_dir() {
         let bundled = res.join("php-agent");
-        let php = bundled.join("php");
+        // Windows 静态产物为 php.exe，其余平台为 php
+        let php = if cfg!(windows) { bundled.join("php.exe") } else { bundled.join("php") };
         if php.is_file() {
             // resource 拷贝可能丢失可执行位，启动前确保
             #[cfg(unix)]

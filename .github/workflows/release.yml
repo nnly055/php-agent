@@ -1,0 +1,76 @@
+name: Release（多平台打包）
+
+# 推 v* tag：四平台构建并把产物（dmg/AppImage/deb/msi/nsis）挂到该 tag 的 Release。
+# 手动 dispatch：tag 留空 = 仅验证四平台构建（产物挂在本 run 的 Artifacts）；
+#               填 tag = 构建并上传到该 tag 的既有 Release。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "构建并上传到该 tag 的 Release（留空 = 仅验证构建）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, name: macOS-AppleSilicon }
+          - { os: macos-13, name: macOS-Intel }
+          - { os: ubuntu-22.04, name: Linux-x64 }
+          - { os: windows-latest, name: Windows-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: curl, mbstring, sqlite3
+          coverage: none
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装 Linux 系统依赖（Tauri v2）
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Composer install（内核 vendor）
+        run: composer install --no-interaction --no-progress --no-dev
+
+      - name: 前端依赖
+        run: npm ci
+        working-directory: desktop
+
+      - name: 组装 PHP 后端（静态 php + 内核目录）
+        run: bash desktop/scripts/bundle-backend.sh
+
+      - name: 构建 Tauri 应用
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tauriScript: npm run tauri
+          tagName: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag || '' }}
+          releaseName: "PHP Agent ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag || '' }}"
+          releaseBody: "各平台安装包：macOS（Apple Silicon / Intel dmg）、Linux（AppImage / deb）、Windows（msi / nsis 安装器）。内置静态 PHP 运行时，无需安装 PHP。"
+          releaseDraft: false
+          prerelease: false
+          includeRelease: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name != '') || inputs.tag != '' }}
+          includeDebug: false
