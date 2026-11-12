@@ -131,6 +131,12 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
       // defaultModel 恒传空串：服务端从不使用全局默认模型，模型回落 profile 首个（避免显示≠实际）
       defaultModel: "",
     };
+    // maxTokens 前置校验：与 PHP setProfiles（≥1024 显式报错）对齐，防止本地保存成功而
+    // PHP 推送被拒的 split-brain（Rust 侧仅校验 >0，入口在此挡住）
+    if (payload.profiles.some((p) => p.models.some((m) => m.maxTokens != null && m.maxTokens < 1024))) {
+      setResult({ ok: false, message: "模型 maxTokens 不能低于 1024" });
+      return;
+    }
     setSaving(true);
     setResult(null);
     try {
@@ -240,27 +246,33 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
                         value={m.contextTokens ?? ""}
                         placeholder="上下文 128000"
                         className="w-28"
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          // 归一化加固：非法/非正数置空，小数截断为整数（3.5 → 3）
+                          const n = Number(e.target.value);
+                          const v = Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
                           updateProfile(i, {
                             models: p.models.map((mm, mmi) =>
-                              mmi === mi ? { ...mm, contextTokens: e.target.value === "" ? null : Number(e.target.value) } : mm,
+                              mmi === mi ? { ...mm, contextTokens: v } : mm,
                             ),
-                          })
-                        }
+                          });
+                        }}
                       />
                       <Input
                         type="number"
-                        min={1}
+                        min={1024}
                         value={m.maxTokens ?? ""}
-                        placeholder="输出默认"
+                        placeholder="输出 ≥1024"
                         className="w-28"
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          // 同上；下限 1024 由保存前置校验拦截（与后端 setProfiles/Config::maxTokens 对齐）
+                          const n = Number(e.target.value);
+                          const v = Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
                           updateProfile(i, {
                             models: p.models.map((mm, mmi) =>
-                              mmi === mi ? { ...mm, maxTokens: e.target.value === "" ? null : Number(e.target.value) } : mm,
+                              mmi === mi ? { ...mm, maxTokens: v } : mm,
                             ),
-                          })
-                        }
+                          });
+                        }}
                       />
                       <Button
                         variant="outline"

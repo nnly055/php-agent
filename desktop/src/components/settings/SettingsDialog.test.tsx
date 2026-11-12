@@ -34,9 +34,9 @@ describe("SettingsDialog 平台管理", () => {
     await waitFor(() => expect(screen.getByDisplayValue("DS")).toBeInTheDocument());
     // 模型条目行：名称输入框回填该平台的首个模型（对象形式的 name 字段）
     expect(screen.getByPlaceholderText(/模型名，如/)).toHaveDisplayValue("deepseek-chat");
-    // contextTokens / maxTokens 数值输入框存在且为空（mock 未提供）
+    // contextTokens / maxTokens 数值输入框存在且为空（mock 未提供）；maxTokens 下限在 placeholder 中明示
     expect(screen.getByPlaceholderText(/上下文/)).toHaveDisplayValue("");
-    expect(screen.getByPlaceholderText(/输出默认/)).toHaveDisplayValue("");
+    expect(screen.getByPlaceholderText(/输出 ≥1024/)).toHaveDisplayValue("");
     // 全局 defaultModel 旋钮已移除（服务端从不使用；输入框不再渲染）
     expect(screen.queryByRole("textbox", { name: /默认模型/ })).not.toBeInTheDocument();
     // 单平台：默认 radio 勾选，删除按钮禁用（至少保留一个平台）
@@ -71,7 +71,7 @@ describe("SettingsDialog 平台管理", () => {
     const nameInputs = screen.getAllByPlaceholderText(/模型名，如/);
     expect(nameInputs[1]).toHaveDisplayValue("");
     expect(screen.getAllByPlaceholderText(/上下文/)[1]).toHaveDisplayValue("");
-    expect(screen.getAllByPlaceholderText(/输出默认/)[1]).toHaveDisplayValue("");
+    expect(screen.getAllByPlaceholderText(/输出 ≥1024/)[1]).toHaveDisplayValue("");
     // 空名行在保存组装时被过滤，payload 只含原条目
     fireEvent.click(screen.getByText("保存"));
     await waitFor(() => expect(tauri.saveProfiles).toHaveBeenCalled());
@@ -113,6 +113,38 @@ describe("SettingsDialog 平台管理", () => {
     await waitFor(() => expect((tauri.saveProfiles as any).mock.calls.length).toBeGreaterThanOrEqual(2));
     arg = (tauri.saveProfiles as any).mock.calls.at(-1)[0];
     expect(arg.profiles[0].models[0].contextTokens).toBeNull();
+  });
+
+  it("maxTokens=500 保存被前置校验拦截：saveProfiles/pushProfiles 均不调用，行内提示 1024", async () => {
+    // 与 PHP setProfiles 的 ≥1024 下限对齐：防止 Rust 保存成功而 PHP 推送被拒的 split-brain
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
+    await screen.findByDisplayValue("DS");
+    fireEvent.change(screen.getByPlaceholderText(/输出 ≥1024/), { target: { value: "500" } });
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(screen.getByText(/1024/)).toBeInTheDocument());
+    expect(tauri.saveProfiles).not.toHaveBeenCalled();
+    expect(api.pushProfiles).not.toHaveBeenCalled();
+  });
+
+  it("maxTokens/contextTokens 输入归一化：小数截断为整数、非法输入置空；1024 下限值可保存", async () => {
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
+    await screen.findByDisplayValue("DS");
+    const maxInput = screen.getByPlaceholderText(/输出 ≥1024/);
+    fireEvent.change(maxInput, { target: { value: "3.5" } });
+    expect(maxInput).toHaveDisplayValue("3");
+    fireEvent.change(maxInput, { target: { value: "abc" } });
+    expect(maxInput).toHaveDisplayValue("");
+    const ctxInput = screen.getByPlaceholderText(/上下文/);
+    fireEvent.change(ctxInput, { target: { value: "9.9" } });
+    expect(ctxInput).toHaveDisplayValue("9");
+    // 恰在下限的 1024 可正常走保存链路
+    fireEvent.change(maxInput, { target: { value: "1024" } });
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(tauri.saveProfiles).toHaveBeenCalled());
+    const arg = (tauri.saveProfiles as any).mock.calls[0][0];
+    expect(arg.profiles[0].models[0].maxTokens).toBe(1024);
   });
 
   it("添加平台产生第二个条目并成为可选项", async () => {
