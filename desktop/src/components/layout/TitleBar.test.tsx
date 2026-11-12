@@ -7,10 +7,13 @@ import { useUiStore } from "../../store/useUiStore";
 describe("TitleBar 配置入口", () => {
   beforeEach(() => {
     useAppStore.getState().reset();
+    // useUiStore 无 reset：手动清空目录缓存，避免用例间串扰
+    useUiStore.getState().setProfilesPayload(null);
     useUiStore.getState().setSettingsOpen(false);
   });
 
   it("model 未配置时徽章显示 未配置 且为警示色", () => {
+    useUiStore.getState().setProfilesPayload(null);
     useAppStore.getState().setStatus({
       provider: "openai", model: "", workspace: "/tmp", permissions: "ask",
       sessionStore: "json", mcp: true, version: "0.2.0", maxIterations: 25,
@@ -29,5 +32,19 @@ describe("TitleBar 配置入口", () => {
     render(<TitleBar />);
     fireEvent.click(screen.getByText(/openai\/gpt-4o/));
     expect(useUiStore.getState().settingsOpen).toBe(true);
+  });
+
+  it("有目录且当前会话有选择时，徽章显示 档名▸所选模型", () => {
+    useUiStore.getState().setProfilesPayload({
+      profiles: [
+        { id: "p-1", name: "OpenAI", provider: "openai", apiKey: "", baseUrl: "", models: ["gpt-4o"] },
+        { id: "p-2", name: "GLM", provider: "zhipu", apiKey: "", baseUrl: "", models: ["glm-4.6", "glm-4.7"] },
+      ],
+      defaultProfile: "p-1",
+      defaultModel: "gpt-4o",
+    });
+    useAppStore.getState().setSelection({ profileId: "p-2", model: "glm-4.7" });
+    render(<TitleBar />);
+    expect(screen.getByText("GLM▸glm-4.7")).toBeInTheDocument();
   });
 });

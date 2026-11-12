@@ -6,7 +6,17 @@ import { useUiStore } from "../../store/useUiStore";
 export function TitleBar() {
   const store = useProjectStore();
   const status = store((s) => s.status);
+  const selection = store((s) => s.selection);
   const connected = store((s) => s.connected);
+  // 全局凭据目录：徽章优先显示当前会话选择解析出的档名与模型，回落到 /status
+  const profilesPayload = useUiStore((s) => s.profilesPayload);
+  const selProfile = profilesPayload?.profiles.find((p) => p.id === (selection.profileId ?? profilesPayload?.defaultProfile));
+  const selModel = selection.model ?? profilesPayload?.defaultModel ?? selProfile?.models[0] ?? "";
+  const badgeText = selProfile
+    ? `${selProfile.name || selProfile.provider}▸${selModel || "未选"}`
+    : `${status?.provider ?? "?"}/${status?.model || "未配置"}`;
+  // 仅在目录为空且后端也未配置模型时才警示（有目录即视为可用，哪怕尚未就绪）
+  const unconfigured = !selProfile && !status?.model && !(profilesPayload && profilesPayload.profiles.length > 0);
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
       <div className="flex items-center gap-2">
@@ -17,21 +27,19 @@ export function TitleBar() {
         <FolderGit2 size={13} /> {status?.workspace ?? "…"}
       </span>
       <div className="ml-auto flex items-center gap-2">
-        {status && (
-          <button
-            type="button"
-            onClick={() => useUiStore.getState().setSettingsOpen(true)}
-            title="配置 API"
-            className="cursor-pointer"
+        <button
+          type="button"
+          onClick={() => useUiStore.getState().setSettingsOpen(true)}
+          title="配置 API"
+          className="cursor-pointer"
+        >
+          <Badge
+            variant="outline"
+            className={`gap-1 border-border font-mono text-[11px] ${unconfigured ? "text-warning" : "text-muted"}`}
           >
-            <Badge
-              variant="outline"
-              className={`gap-1 border-border font-mono text-[11px] ${status.model ? "text-muted" : "text-warning"}`}
-            >
-              <Cpu size={12} /> {status.provider}/{status.model || "未配置"}
-            </Badge>
-          </button>
-        )}
+            <Cpu size={12} /> {badgeText}
+          </Badge>
+        </button>
         {status && (
           <Badge variant="outline" className="gap-1 border-border text-[11px] text-muted">
             {status.permissions === "ask" ? <ShieldCheck size={12} className="text-success" /> : <ShieldOff size={12} className="text-warning" />}

@@ -11,12 +11,13 @@ import {
   addProject as addProjectDialog,
   closeProject,
   getLastSession,
+  getProfiles,
   listProjects,
   onBackendEvent,
   openProject,
   type OpenedSession,
 } from "./lib/tauri";
-import { getStatus, listSessions } from "./lib/api";
+import { getStatus, listSessions, pushProfiles } from "./lib/api";
 
 /** 一个打开的项目标签：独立 store（独立 sidecar 进程）+ 项目路径。 */
 type ProjectTab = { id: string; path: string; store: ProjectStore };
@@ -37,6 +38,11 @@ function ProjectWorkspace({ tab, onClose }: { tab: ProjectTab; onClose: () => vo
     store.getState().setStatus(status);
     store.getState().setSessions(sessions.sessions);
     store.getState().setConnected(true);
+    // 就绪后推送全局凭据目录（幂等热更新；旧内核 404 静默——设置保存时已提示重启生效）
+    const p = useUiStore.getState().profilesPayload;
+    if (p && p.profiles.length > 0) {
+      pushProfiles(url, p).catch(() => {});
+    }
   }, [store]);
 
   useEffect(() => {
@@ -89,6 +95,10 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
+        try {
+          const p = await getProfiles();
+          useUiStore.getState().setProfilesPayload(p);
+        } catch { /* 目录拉取失败不阻塞启动 */ }
         const [projects, last] = await Promise.all([listProjects(), getLastSession()]);
         setProjects(projects);
         if (last.workspace && last.sessionId) {
