@@ -33,6 +33,39 @@ fn desktop_json_path() -> PathBuf {
     PathBuf::from(home_dir()).join(".php-agent").join("desktop.json")
 }
 
+/// 一个模型条目：name 为对话/请求所用模型名；contextTokens/maxTokens 为可选 per-model 参数
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelEntry {
+    pub name: String,
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
+}
+
+/// models 双格式反序列化：数组项为纯字符串（旧 desktop.json / 旧前端）或对象（新格式）均可；
+/// 序列化恒为对象（Vec<ModelEntry> 的普通 derive 即可）。
+fn deserialize_models<'de, D>(deserializer: D) -> Result<Vec<ModelEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum RawEntry {
+        Str(String),
+        Obj(ModelEntry),
+    }
+    let raw = <Vec<RawEntry> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .map(|e| match e {
+            RawEntry::Str(s) => ModelEntry { name: s, context_tokens: None, max_tokens: None },
+            RawEntry::Obj(m) => m,
+        })
+        .collect())
+}
+
 /// 一个平台档：name 供 UI 显示；models 为该平台可选模型列表（首个为默认）
 // Default 手写与 derive 等价（空串/空 vec），derive 以满足 clippy::derivable_impls
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -43,7 +76,8 @@ pub struct ProfileConfig {
     pub provider: String,
     pub api_key: String,
     pub base_url: String,
-    pub models: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_models")]
+    pub models: Vec<ModelEntry>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -77,7 +111,7 @@ fn migrate_legacy(mut st: PersistedState) -> PersistedState {
             if !cfg.provider.is_empty() {
                 let mut models = Vec::new();
                 if !cfg.model.is_empty() {
-                    models.push(cfg.model.clone());
+                    models.push(ModelEntry { name: cfg.model.clone(), context_tokens: None, max_tokens: None });
                 }
                 st.profiles.push(ProfileConfig {
                     id: "default".into(), name: cfg.provider.clone(),
@@ -439,6 +473,9 @@ fn validate_profiles(profiles: &[ProfileConfig], default_profile: &str) -> Resul
         if !matches!(p.provider.as_str(), "openai" | "anthropic" | "fake") {
             return Err(format!("provider 必须是 openai|anthropic|fake: {}", p.id));
         }
+        if p.models.iter().any(|m| m.name.trim().is_empty()) {
+            return Err(format!("模型 name 不能为空: {}", p.id));
+        }
     }
     if !profiles.iter().any(|p| p.id == default_profile) {
         return Err("defaultProfile 必须在 profiles 中".into());
@@ -453,7 +490,7 @@ fn default_sidecar_config(st: &PersistedState) -> Option<SidecarConfig> {
     if p.provider.is_empty() {
         return None;
     }
-    let model = st.default_model.clone().or_else(|| p.models.first().cloned()).unwrap_or_default();
+    let model = st.default_model.clone().or_else(|| p.models.first().map(|m| m.name.clone())).unwrap_or_default();
     Some(SidecarConfig { provider: p.provider.clone(), api_key: p.api_key.clone(), base_url: p.base_url.clone(), model })
 }
 
@@ -571,11 +608,16 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    /// 测试辅助：仅 name 的模型条目（per-model 参数为 None）
+    fn me(name: &str) -> ModelEntry {
+        ModelEntry { name: name.into(), context_tokens: None, max_tokens: None }
+    }
+
     fn sample_profiles() -> Vec<ProfileConfig> {
         vec![ProfileConfig {
             id: "p-1".into(), name: "DS".into(), provider: "openai".into(),
             api_key: "sk-1".into(), base_url: "https://api.deepseek.com".into(),
-            models: vec!["deepseek-chat".into()],
+            models: vec![me("deepseek-chat")],
         }]
     }
 
@@ -587,6 +629,10 @@ mod tests {
         ).unwrap();
         assert_eq!(st.profiles.len(), 1);
         assert_eq!(st.default_profile.as_deref(), Some("p-1"));
+        // 旧字符串项 → ModelEntry（name 保留，参数为 None）
+        assert_eq!(st.profiles[0].models[0].name, "m1");
+        assert_eq!(st.profiles[0].models[0].context_tokens, None);
+        assert_eq!(st.profiles[0].models[0].max_tokens, None);
         // 旧格式：单 config → profiles 空（迁移由 load_state/migrate 完成，序列化层面仅解析）
         let legacy: PersistedState = serde_json::from_str(
             r#"{"projects":[],"last_session":"","config":{"provider":"openai","apiKey":"sk-old","baseUrl":"https://y","model":"m-old"}}"#,
@@ -597,6 +643,8 @@ mod tests {
         assert_eq!(migrated.profiles.len(), 1);
         assert_eq!(migrated.profiles[0].id, "default");
         assert_eq!(migrated.profiles[0].api_key, "sk-old");
+        assert_eq!(migrated.profiles[0].models.len(), 1);
+        assert_eq!(migrated.profiles[0].models[0].name, "m-old");
         assert_eq!(migrated.default_profile.as_deref(), Some("default"));
         assert_eq!(migrated.default_model.as_deref(), Some("m-old"));
     }
@@ -612,5 +660,82 @@ mod tests {
         let mut bad = sample_profiles();
         bad[0].provider = "nope".into();
         assert!(validate_profiles(&bad, "p-1").is_err(), "provider 非法拒绝");
+    }
+
+    #[test]
+    fn models_legacy_string_item_parses() {
+        // 旧格式：数组项为纯字符串 → name 保留、per-model 参数为 None
+        let st: PersistedState = serde_json::from_str(
+            r#"{"profiles":[{"id":"p-1","name":"DS","provider":"openai","apiKey":"k","baseUrl":"https://x","models":["m1"]}],"defaultProfile":"p-1"}"#,
+        ).unwrap();
+        assert_eq!(st.profiles[0].models.len(), 1);
+        assert_eq!(st.profiles[0].models[0].name, "m1");
+        assert_eq!(st.profiles[0].models[0].context_tokens, None);
+        assert_eq!(st.profiles[0].models[0].max_tokens, None);
+    }
+
+    #[test]
+    fn models_object_item_parses() {
+        // 新格式：数组项为对象（camelCase 参数可选）
+        let st: PersistedState = serde_json::from_str(
+            r#"{"profiles":[{"id":"p-1","name":"DS","provider":"openai","apiKey":"k","baseUrl":"https://x","models":[{"name":"m1","contextTokens":128000,"maxTokens":8192}]}],"defaultProfile":"p-1"}"#,
+        ).unwrap();
+        let m = &st.profiles[0].models[0];
+        assert_eq!(m.name, "m1");
+        assert_eq!(m.context_tokens, Some(128000));
+        assert_eq!(m.max_tokens, Some(8192));
+    }
+
+    #[test]
+    fn models_mixed_array_parses() {
+        // 混合数组：字符串项与对象项并存
+        let st: PersistedState = serde_json::from_str(
+            r#"{"profiles":[{"id":"p-1","name":"DS","provider":"openai","apiKey":"k","baseUrl":"https://x","models":["legacy",{"name":"m2","contextTokens":32000},{"name":"m3"}]}],"defaultProfile":"p-1"}"#,
+        ).unwrap();
+        let models = &st.profiles[0].models;
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0].name, "legacy");
+        assert_eq!(models[0].context_tokens, None);
+        assert_eq!(models[1].name, "m2");
+        assert_eq!(models[1].context_tokens, Some(32000));
+        assert_eq!(models[1].max_tokens, None);
+        assert_eq!(models[2].name, "m3");
+    }
+
+    #[test]
+    fn models_serialize_always_objects() {
+        // 序列化恒为对象：即使 models 由字符串解析而来
+        let st: PersistedState = serde_json::from_str(
+            r#"{"profiles":[{"id":"p-1","name":"DS","provider":"openai","apiKey":"k","baseUrl":"https://x","models":["m1"]}],"defaultProfile":"p-1"}"#,
+        ).unwrap();
+        let text = serde_json::to_string(&st.profiles[0]).unwrap();
+        assert!(text.contains(r#""models":[{"name":"m1""#), "序列化应为对象形态: {text}");
+    }
+
+    #[test]
+    fn models_roundtrip_lossless() {
+        // 往返无损：字符串解析 → 序列化（对象）→ 再解析，name/参数不变
+        let st: PersistedState = serde_json::from_str(
+            r#"{"profiles":[{"id":"p-1","name":"DS","provider":"openai","apiKey":"k","baseUrl":"https://x","models":["m1",{"name":"m2","contextTokens":128000,"maxTokens":8192}]}],"defaultProfile":"p-1"}"#,
+        ).unwrap();
+        let text = serde_json::to_string(&st.profiles[0]).unwrap();
+        let back: ProfileConfig = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.models.len(), 2);
+        assert_eq!(back.models[0].name, "m1");
+        assert_eq!(back.models[0].context_tokens, None);
+        assert_eq!(back.models[1].name, "m2");
+        assert_eq!(back.models[1].context_tokens, Some(128000));
+        assert_eq!(back.models[1].max_tokens, Some(8192));
+    }
+
+    #[test]
+    fn validate_profiles_rejects_empty_model_name() {
+        // 条目 name 为空（含纯空白）拒绝
+        let mut bad = sample_profiles();
+        bad[0].models[0].name = "  ".into();
+        assert!(validate_profiles(&bad, "p-1").is_err(), "模型 name 空白拒绝");
+        let mut empty = sample_profiles();
+        empty[0].models[0].name = "".into();
+        assert!(validate_profiles(&empty, "p-1").is_err(), "模型 name 空串拒绝");
     }
 }
