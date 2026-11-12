@@ -81,11 +81,23 @@ fn save_state_full(st: &PersistedState) {
     #[cfg(unix)]
     {
         use std::io::Write as _;
-        if let Ok(mut f) = std::fs::File::create(&path) {
+        use std::os::unix::fs::OpenOptionsExt;
+        // mode(0o600)：新建即权限正确（先 create 后 chmod 存在 key 以 0644 可见的窗口）
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+        {
             let _ = f.write_all(text.as_bytes());
-            // 含 api key：权限收紧到 0600
+            // 旧文件（可能 0644）补一次收紧；失败仅在 stderr 提示，不静默
             use std::os::unix::fs::PermissionsExt;
-            let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+            if f.metadata().is_ok_and(|m| m.permissions().mode() & 0o777 != 0o600)
+                && f.set_permissions(std::fs::Permissions::from_mode(0o600)).is_err()
+            {
+                eprintln!("无法收紧 {} 权限到 0600", path.display());
+            }
         }
     }
     #[cfg(not(unix))]
