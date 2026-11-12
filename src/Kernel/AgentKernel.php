@@ -103,6 +103,18 @@ final class AgentKernel
         return $this->sessionStore ??= new InMemorySessionStore();
     }
 
+    private ?\PhpAgent\Server\ProfileRegistry $profileRegistry = null;
+
+    public function setProfileRegistry(\PhpAgent\Server\ProfileRegistry $r): void
+    {
+        $this->profileRegistry = $r;
+    }
+
+    public function profileRegistry(): ?\PhpAgent\Server\ProfileRegistry
+    {
+        return $this->profileRegistry;
+    }
+
     public function addHook(AgentHook $hook): void
     {
         $this->hooks[] = $hook; // AgentLoop 接线在 Phase 2
