@@ -211,11 +211,17 @@ final class AgentLoop
     }
 
     public function __construct(
-        private readonly LLMClient $client,
+        private LLMClient $client, // 非 readonly：per-turn 切换（多平台）需要运行时替换
         private readonly ToolRegistry $registry,
         private readonly string $system,
         private readonly int $maxIterations = 25,
         private readonly iterable $hooks = [],
     ) {
+    }
+
+    /** per-turn 切换（多平台）：服务端在每轮 /agent 前替换 client */
+    public function setClient(LLMClient $client): void
+    {
+        $this->client = $client;
     }
 }

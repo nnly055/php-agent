@@ -24,6 +24,8 @@ use React\Stream\ThroughStream;
  *   POST /confirm/{id}      → 工具授权决定（Task 5）
  *   POST /agent             → SSE 流式对话
  *   POST /config/test      → 测试连接（桌面设置对话框；不落审计/日志）
+ *   GET  /config/profiles   → 当前 profiles 目录（含 apiKey，桌面本地回显用）
+ *   POST /config/profiles   → 热更新 profiles 目录（校验失败 400）
  *   GET  /                  → 内置极简聊天页（Web 用，桌面不走这里）
  *
  * 仅绑 127.0.0.1；所有响应带 CORS 头（前端 origin 与 API 不同源）。
@@ -36,6 +38,7 @@ final class AgentServer
         private readonly array $hooks,
         private readonly string $publicDir,
         private readonly Config $config,
+        private readonly ProfileRegistry $profiles,
         private readonly ?ConfirmBroker $broker = null,
     ) {
     }
@@ -72,6 +75,25 @@ final class AgentServer
             ]);
         }
 
+        if ($path === '/config/profiles') {
+            if ($method === 'GET') {
+                // 原样返回原始列表（含 apiKey）：仅绑 127.0.0.1 的桌面本地接口，设置页需要回显
+                return $this->json(200, $this->profiles->profiles());
+            }
+            if ($method === 'POST') {
+                $body = json_decode((string) $request->getBody(), true);
+                try {
+                    $this->profiles->setProfiles(
+                        is_array($body['profiles'] ?? null) ? $body['profiles'] : [],
+                        (string) ($body['defaultProfile'] ?? ''),
+                    );
+                } catch (\InvalidArgumentException $e) {
+                    return $this->json(400, ['error' => $e->getMessage()]);
+                }
+                return $this->json(200, ['ok' => true]);
+            }
+        }
+
         if ($method === 'GET' && $path === '/sessions') {
             $limit = (int) ($request->getQueryParams()['limit'] ?? 50);
             $metas = array_map(static fn ($m) => $m->toArray(), $this->store->list(max(1, $limit)));
@@ -81,7 +103,13 @@ final class AgentServer
         if (preg_match('#^/sessions/([^/]+)$#', $path, $m)) {
             $id = urldecode($m[1]);
             if ($method === 'GET') {
-                return $this->json(200, ['id' => $id, 'messages' => $this->store->load($id)]);
+                // meta（含本会话的 profileId/model 选择）：遍历列表找到对应会话；未知会话 → null
+                $metas = $this->store->list(PHP_INT_MAX);
+                $meta = null;
+                foreach ($metas as $m) {
+                    if ($m->id === $id) { $meta = $m->toArray(); break; }
+                }
+                return $this->json(200, ['id' => $id, 'messages' => $this->store->load($id), 'meta' => $meta]);
             }
             if ($method === 'DELETE') {
                 $this->store->delete($id);
@@ -133,6 +161,20 @@ final class AgentServer
             return $this->json(400, ['error' => 'message 不能为空']);
         }
 
+        // per-turn 模型切换：在进 async 之前同步解析（校验失败立刻 400，SSE 已开流就无法改状态码）
+        $profileId = isset($body['profile_id']) ? (string) $body['profile_id'] : null;
+        $model = isset($body['model']) ? (string) $body['model'] : null;
+        try {
+            $client = $this->profiles->resolve($profileId, $model);
+        } catch (\InvalidArgumentException $e) {
+            return $this->json(400, ['error' => $e->getMessage()]);
+        }
+        $this->loop->setClient($client);
+        $this->profiles->setActiveClient($client);
+        // 会话选择落盘：显式指定 profile/model 才记录；都没传 → null（保留上次保存的选择）
+        $selection = ($profileId !== null || $model !== null)
+            ? ['profileId' => $profileId, 'model' => $model] : null;
+
         $sid = (string) ($body['session_id'] ?? 'default');
         $messages = $this->store->load($sid);
         $stream = new ThroughStream();
@@ -144,7 +186,7 @@ final class AgentServer
             $broker?->discardActive();
         });
 
-        \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker): void {
+        \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker, $selection): void {
             try {
                 $onEvent = function (StreamEvent $e) use ($stream): void {
                     $stream->write($this->sseFrame($e));
@@ -154,7 +196,7 @@ final class AgentServer
                     $broker->setEmitter($onEvent);
                 }
                 $final = $this->loop->run($messages, $message, $onEvent);
-                $this->store->save($sid, $messages);
+                $this->store->save($sid, $messages, $selection);
                 HookPipeline::fire($this->hooks, 'session_saved', ['sessionId' => $sid]);
                 $stream->write($this->sseFrame(StreamEvent::finalAnswer($final)));
                 $stream->end();
