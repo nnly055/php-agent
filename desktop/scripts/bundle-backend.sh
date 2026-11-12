@@ -29,11 +29,17 @@ URL="https://dl.static-php.dev/static-php-cli/common/php-${PHP_VERSION}-cli-${PL
 
 mkdir -p "$DEST"
 
-# ── 1) 静态 php 二进制 ────────────────────────────────────────
+# ── 1) 静态 php 二进制（SKIP_STATIC_PHP=1 跳过，使用系统 php——Windows 矩阵用）──
+IS_WINDOWS=0; [ "$PLATFORM" = "windows" ] && IS_WINDOWS=1
 PHP_NAME=php; [ "$IS_WINDOWS" = "1" ] && PHP_NAME=php.exe
-PHP_BIN="$DEST/$PHP_NAME"
 CACHE="$HOME/.cache/php-agent-desktop/php-${PHP_VERSION}-${PLATFORM}-${ARCH}"
-if [ ! -x "$PHP_BIN" ] || [ "${FORCE_PHP:-0}" = "1" ]; then
+PHP_BIN="$DEST/$PHP_NAME"
+
+if [ "${SKIP_STATIC_PHP:-0}" = "1" ]; then
+  PHP_BIN="$(command -v php)"
+  echo "▸ 跳过静态 PHP，使用系统 PHP: $PHP_BIN"
+elif [ ! -x "$PHP_BIN" ] || [ "${FORCE_PHP:-0}" = "1" ]; then
+  mkdir -p "$(dirname "$CACHE")" /tmp/static-php-extract
   if [ -x "$CACHE" ] || [ -f "$CACHE" ]; then
     echo "▸ 使用缓存: $CACHE"
     cp "$CACHE" "$PHP_BIN"
@@ -55,11 +61,11 @@ if [ ! -x "$PHP_BIN" ] || [ "${FORCE_PHP:-0}" = "1" ]; then
       sleep 2
     done
     [ "$ok" = "1" ] || { echo "✗ 静态 PHP 下载失败（重试已耗尽）: $URL"; exit 1; }
-    cp /tmp/static-php-extract/$PHP_NAME "$CACHE" 2>/dev/null || cp /tmp/static-php-extract/php "$CACHE"
+    cp /tmp/static-php-extract/$PHP_NAME "$CACHE"
     cp "$CACHE" "$PHP_BIN"
   fi
+  [ "$IS_WINDOWS" = "0" ] && chmod 755 "$PHP_BIN"
 fi
-[ "$IS_WINDOWS" = "0" ] && chmod 755 "$PHP_BIN"
 
 # ── 2) 内核代码目录（保留 plugins/public/vendor 结构，插件发现零改动）──
 # Windows（Git Bash）无 rsync，用 cp -R；rm -rf 先清实现覆盖语义

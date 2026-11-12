@@ -59,6 +59,10 @@ jobs:
 
       - name: 组装 PHP 后端（静态 php + 内核目录）
         run: bash desktop/scripts/bundle-backend.sh
+        # Windows：static-php 官方无 Windows 预编译产物，用 runner 里的系统 PHP
+        # （setup-php 已装 8.2；Rust resolve_backend 自动回退到系统 php）
+        env:
+          SKIP_STATIC_PHP: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
 
       - name: 构建 Tauri 应用
         uses: tauri-apps/tauri-action@v0
