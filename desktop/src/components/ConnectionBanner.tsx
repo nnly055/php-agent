@@ -14,7 +14,10 @@ export function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
     try {
       // workspace 校验当前 sidecar 存活；restart 按同 workspace 重拉进程
       await getWorkspace(store.getState().sessionId);
-      await restartSession(store.getState().sessionId);
+      // restart 产生新 sessionId 与端口：立即重绑，否则后续请求打到旧地址
+      const opened = await restartSession(store.getState().sessionId);
+      store.getState().setSessionId(opened.sessionId);
+      store.getState().setBackend(`http://127.0.0.1:${opened.port}`);
       onRetry();
     } catch (e: any) {
       store.getState().setError(e?.message ?? "重连失败");
