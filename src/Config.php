@@ -51,6 +51,12 @@ final class Config
         return new self($env);
     }
 
+    /** 用给定 env（AGENT_* 键值映射）构造实例；/config/test 与单测的临时配置入口 */
+    public static function fromArray(array $env): self
+    {
+        return new self($env);
+    }
+
     /** provider：openai（兼容协议，覆盖 GLM/DeepSeek/Kimi/OpenAI 等）| anthropic | fake */
     public function provider(): string
     {

@@ -105,4 +105,29 @@ final class ConfigTest extends TestCase
             @rmdir($ws);
         }
     }
+
+    public function testFromArrayBuildsIndependentConfig(): void
+    {
+        $c = Config::fromArray([
+            'AGENT_PROVIDER' => 'anthropic',
+            'AGENT_API_KEY' => 'sk-test',
+            'AGENT_BASE_URL' => 'https://example.com/',
+            'AGENT_MODEL' => 'claude-sonnet-4-5',
+            'AGENT_MAX_TOKENS' => '16',
+        ]);
+        self::assertSame('anthropic', $c->provider());
+        self::assertSame('sk-test', $c->apiKey());
+        self::assertSame('https://example.com', $c->baseUrl());
+        self::assertSame('claude-sonnet-4-5', $c->model());
+        // maxTokens 有 max(1024, …) 下限：传 16 实际生效 1024（压低默认 8192，即 /config/test 的成本控制手段）
+        self::assertSame(1024, $c->maxTokens());
+    }
+
+    public function testFromArrayEmptyFallsBackToDefaults(): void
+    {
+        $c = Config::fromArray([]);
+        self::assertSame('openai', $c->provider());
+        self::assertSame('https://api.openai.com/v1', $c->baseUrl());
+        self::assertSame('', $c->model());
+    }
 }
