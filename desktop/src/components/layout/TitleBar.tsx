@@ -11,7 +11,8 @@ export function TitleBar() {
   // 全局凭据目录：徽章优先显示当前会话选择解析出的档名与模型，回落到 /status
   const profilesPayload = useUiStore((s) => s.profilesPayload);
   const selProfile = profilesPayload?.profiles.find((p) => p.id === (selection.profileId ?? profilesPayload?.defaultProfile));
-  const selModel = selection.model ?? profilesPayload?.defaultModel ?? selProfile?.models[0] ?? "";
+  // defaultModel 不参与回落：服务端从不使用，展示 profile 首个模型才与实际请求一致
+  const selModel = selection.model ?? selProfile?.models[0] ?? "";
   const badgeText = selProfile
     ? `${selProfile.name || selProfile.provider}▸${selModel || "未选"}`
     : `${status?.provider ?? "?"}/${status?.model || "未配置"}`;

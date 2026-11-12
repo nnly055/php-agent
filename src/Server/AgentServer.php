@@ -198,18 +198,37 @@ final class AgentServer
         // per-turn 模型切换：在进 async 之前同步解析（校验失败立刻 400，SSE 已开流就无法改状态码）
         $profileId = isset($body['profile_id']) ? (string) $body['profile_id'] : null;
         $model = isset($body['model']) ? (string) $body['model'] : null;
-        try {
-            $client = $this->profiles->resolve($profileId, $model);
-        } catch (\InvalidArgumentException $e) {
-            return $this->json(400, ['error' => $e->getMessage()]);
+        $explicit = $profileId !== null || $model !== null;
+        $sid = (string) ($body['session_id'] ?? 'default');
+
+        if (!$explicit) {
+            // spec：未携带 → 该会话已存选择（meta）→ 默认档；save 仍传 null 保持 meta 不变
+            foreach ($this->store->list(PHP_INT_MAX) as $m) {
+                if ($m->id === $sid) {
+                    $profileId = $m->profileId;
+                    $model = $m->model;
+                    break;
+                }
+            }
+            try {
+                $client = $this->profiles->resolve($profileId, $model);
+            } catch (\InvalidArgumentException $e) {
+                // 会话存的 profile 已被删除：回落默认档（保持旧会话可用，优先于严格报错）
+                $client = $this->profiles->resolve(null, null);
+            }
+        } else {
+            // 显式传入未知 profile/model：立刻 400
+            try {
+                $client = $this->profiles->resolve($profileId, $model);
+            } catch (\InvalidArgumentException $e) {
+                return $this->json(400, ['error' => $e->getMessage()]);
+            }
         }
         $this->loop->setClient($client);
         $this->profiles->setActiveClient($client);
-        // 会话选择落盘：显式指定 profile/model 才记录；都没传 → null（保留上次保存的选择）
-        $selection = ($profileId !== null || $model !== null)
-            ? ['profileId' => $profileId, 'model' => $model] : null;
-
-        $sid = (string) ($body['session_id'] ?? 'default');
+        // 会话选择落盘：显式指定 profile/model 才记录；都没传 → null（保留上次保存的选择，
+        // 也避免回退出的 meta 值被当成新选择写回）
+        $selection = $explicit ? ['profileId' => $profileId, 'model' => $model] : null;
 
         $messages = $this->store->load($sid);
         $stream = new ThroughStream();

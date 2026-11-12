@@ -83,4 +83,13 @@ describe("Composer 平台/模型切换器", () => {
     expect(screen.getAllByRole("combobox")[1]).toHaveValue("custom-x");
     expect(screen.getByRole("option", { name: "custom-x" })).toBeInTheDocument();
   });
+
+  it("selection 为空时回落所选平台首个模型，不使用全局 defaultModel（显示=实际）", () => {
+    // defaultModel ≠ 平台首个模型：服务端从不使用 defaultModel，显示它就是谎报
+    useUiStore.getState().setProfilesPayload({ ...payload, defaultModel: "phantom-model" });
+    useAppStore.getState().setActiveSession("web-1", []);
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
+    expect(screen.getAllByRole("combobox")[1]).toHaveValue("deepseek-chat");
+    expect(screen.queryByRole("option", { name: "phantom-model" })).not.toBeInTheDocument();
+  });
 });

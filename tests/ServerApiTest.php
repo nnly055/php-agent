@@ -17,7 +17,7 @@ use React\Http\Message\ServerRequest;
 
 final class ServerApiTest extends TestCase
 {
-    private function server(?InMemorySessionStore $store = null, ?Config $config = null): AgentServer
+    private function server(?InMemorySessionStore $store = null, ?Config $config = null, ?ProfileRegistry $profiles = null): AgentServer
     {
         $store ??= new InMemorySessionStore();
         $loop = new AgentLoop(new FakeLLMClient([]), new ToolRegistry(), 'sys', 5);
@@ -27,7 +27,7 @@ final class ServerApiTest extends TestCase
             file_put_contents($dir . '/.env', "AGENT_PROVIDER=fake\nAGENT_SESSION_STORE=memory\n");
             $config = Config::load($dir);
         }
-        $profiles = new ProfileRegistry(); // helper 无 kernel：fake 档 resolve 走 Registry 内置 FakeLLMClient 回退
+        $profiles ??= new ProfileRegistry(); // helper 无 kernel：fake 档 resolve 走 Registry 内置 FakeLLMClient 回退
         $profiles->setProfiles([['id' => 'default', 'name' => 'fake', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['fake']]], 'default');
         return new AgentServer($loop, $store, [], $dir, $config, $profiles);
     }
@@ -252,6 +252,74 @@ final class ServerApiTest extends TestCase
             'message' => 'hi', 'session_id' => 'x', 'profile_id' => 'ghost',
         ], JSON_THROW_ON_ERROR)));
         self::assertSame(400, $resp->getStatusCode());
+    }
+
+    public function testAgentWithoutSelectionFallsBackToStoredSessionMeta(): void
+    {
+        // spec：未携带选择 → 该会话已存选择（meta）→ 默认档。
+        // fake 档各自解析出独立 client 实例：用 activeClient 的实例同一性证明第二轮回退用了 p2 而非默认档 p1。
+        $profiles = new ProfileRegistry();
+        $s = $this->server(null, null, $profiles);
+        $s->handle(new ServerRequest('POST', 'http://localhost/config/profiles', [], json_encode([
+            'profiles' => [
+                ['id' => 'p1', 'name' => 'F1', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['m1']],
+                ['id' => 'p2', 'name' => 'F2', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['m2']],
+            ], 'defaultProfile' => 'p1',
+        ], JSON_THROW_ON_ERROR)));
+
+        // 第一轮显式带 p2 → meta 存 p2
+        $r1 = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => '第一轮', 'session_id' => 'fb', 'profile_id' => 'p2',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $r1->getStatusCode());
+        Loop::run();
+        $p2Client = $profiles->activeClient();
+        self::assertNotNull($p2Client);
+
+        // 第二轮不带 profile_id/model → 回退 p2（而非默认档 p1），save 传 null 保持 meta 不变
+        $r2 = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => '第二轮不带选择', 'session_id' => 'fb',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $r2->getStatusCode());
+        self::assertSame($p2Client, $profiles->activeClient(), '未携带选择应回退会话已存的 p2 client，而非默认档 p1');
+        Loop::run();
+
+        $list = json_decode((string) $s->handle(new ServerRequest('GET', 'http://localhost/sessions'))->getBody(), true);
+        $meta = array_values(array_filter($list['sessions'], static fn ($m) => $m['id'] === 'fb'))[0];
+        self::assertSame('p2', $meta['profileId'], '回退轮不得把 meta 改写成默认档');
+    }
+
+    public function testAgentStaleStoredProfileFallsBackToDefault(): void
+    {
+        // 会话 meta 存的 profile 已被删除 → 不带选择发一轮回落默认档（200，旧会话可用），meta 不被改写
+        $profiles = new ProfileRegistry();
+        $s = $this->server(null, null, $profiles);
+        $s->handle(new ServerRequest('POST', 'http://localhost/config/profiles', [], json_encode([
+            'profiles' => [
+                ['id' => 'p1', 'name' => 'F1', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['m1']],
+                ['id' => 'p2', 'name' => 'F2', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['m2']],
+            ], 'defaultProfile' => 'p1',
+        ], JSON_THROW_ON_ERROR)));
+        $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => '第一轮', 'session_id' => 'stale', 'profile_id' => 'p2',
+        ], JSON_THROW_ON_ERROR)));
+        Loop::run();
+        // 目录热更新：p2 被移除，meta 仍指向 p2
+        $s->handle(new ServerRequest('POST', 'http://localhost/config/profiles', [], json_encode([
+            'profiles' => [
+                ['id' => 'p1', 'name' => 'F1', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['m1']],
+            ], 'defaultProfile' => 'p1',
+        ], JSON_THROW_ON_ERROR)));
+
+        $resp = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => '第二轮不带选择', 'session_id' => 'stale',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $resp->getStatusCode(), '失效存储档应回落默认档而不是 400');
+        Loop::run();
+
+        $list = json_decode((string) $s->handle(new ServerRequest('GET', 'http://localhost/sessions'))->getBody(), true);
+        $meta = array_values(array_filter($list['sessions'], static fn ($m) => $m['id'] === 'stale'))[0];
+        self::assertSame('p2', $meta['profileId']);
     }
 
     public function testLoadSessionReturnsMeta(): void

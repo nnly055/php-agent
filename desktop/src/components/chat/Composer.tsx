@@ -17,8 +17,8 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onA
   const profiles = profilesPayload?.profiles ?? [];
   const activeId = selection.profileId ?? profilesPayload?.defaultProfile ?? "";
   const activeProfile = profiles.find((p) => p.id === activeId);
-  // 当前模型：会话选择 > 全局默认模型 > 当前平台首个
-  const currentModel = selection.model ?? profilesPayload?.defaultModel ?? activeProfile?.models[0] ?? "";
+  // 当前模型：会话选择 > 当前平台首个（defaultModel 不参与：服务端从不使用，显示≠实际会谎报）
+  const currentModel = selection.model ?? activeProfile?.models[0] ?? "";
   const models = activeProfile?.models ?? [];
   const modelTemp = currentModel !== "" && !models.includes(currentModel);
   // 平台同样兜底：selection 指向的档不在目录（如被删除）时插入临时 option 防空白

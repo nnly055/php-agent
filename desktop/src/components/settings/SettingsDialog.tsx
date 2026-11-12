@@ -27,11 +27,11 @@ const newProfileId = () => `p-${Date.now().toString(36)}-${newIdSeq++}`;
 
 const emptyPayload = (): ProfilesPayload => ({ profiles: [], defaultProfile: "", defaultModel: "" });
 
-/** 深拷贝目录：编辑态直接改 profiles 内对象，不能与全局缓存共享引用 */
+/** 深拷贝目录：编辑态直接改 profiles 内对象，不能与全局缓存共享引用。defaultModel 恒置空（服务端从不使用） */
 const clonePayload = (p: ProfilesPayload): ProfilesPayload => ({
   profiles: p.profiles.map((x) => ({ ...x, models: [...x.models] })),
   defaultProfile: p.defaultProfile,
-  defaultModel: p.defaultModel,
+  defaultModel: "",
 });
 
 export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
@@ -127,7 +127,8 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
         models: p.models.map((m) => m.trim()).filter(Boolean),
       })),
       defaultProfile: valid.some((p) => p.id === draft.defaultProfile) ? draft.defaultProfile : valid[0].id,
-      defaultModel: draft.defaultModel.trim(),
+      // defaultModel 恒传空串：服务端从不使用全局默认模型，模型回落 profile 首个（避免显示≠实际）
+      defaultModel: "",
     };
     setSaving(true);
     setResult(null);
@@ -252,18 +253,6 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
             </Button>
           </div>
         )}
-
-        <label className="block space-y-1">
-          <span className="text-sm text-muted">默认模型（全局，留空 = 用所选平台首个模型）</span>
-          <Input
-            value={draft?.defaultModel ?? ""}
-            placeholder="默认用所选平台首个模型"
-            onChange={(e) =>
-              setDraft((d) => (d ? { ...d, defaultModel: e.target.value } : d))
-            }
-            className="font-mono"
-          />
-        </label>
 
         {result && (
           <p className={`text-xs ${result.ok ? "text-success" : "text-danger"}`}>

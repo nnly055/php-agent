@@ -32,8 +32,10 @@ describe("SettingsDialog 平台管理", () => {
     useUiStore.getState().setSettingsOpen(true);
     render(<SettingsDialog testUrl="http://127.0.0.1:1" />);
     await waitFor(() => expect(screen.getByDisplayValue("DS")).toBeInTheDocument());
-    // 模型列表 textarea（与全局默认模型输入框都可能是 deepseek-chat，按可访问名区分）
+    // 模型列表 textarea 回填该平台的模型
     expect(screen.getByRole("textbox", { name: /一行一个/ })).toHaveDisplayValue("deepseek-chat");
+    // 全局 defaultModel 旋钮已移除（服务端从不使用；输入框不再渲染）
+    expect(screen.queryByRole("textbox", { name: /默认模型/ })).not.toBeInTheDocument();
     // 单平台：默认 radio 勾选，删除按钮禁用（至少保留一个平台）
     expect(screen.getByRole("radio")).toBeChecked();
     expect(screen.getByRole("button", { name: "删除" })).toBeDisabled();
@@ -49,6 +51,8 @@ describe("SettingsDialog 平台管理", () => {
     await waitFor(() => expect(tauri.saveProfiles).toHaveBeenCalled());
     const arg = (tauri.saveProfiles as any).mock.calls[0][0];
     expect(arg.profiles[0].models).toEqual(["deepseek-reasoner"]);
+    // defaultModel 恒传空串：全局旋钮已移除，模型回落 profile 首个
+    expect(arg.defaultModel).toBe("");
     expect(api.pushProfiles).toHaveBeenCalledWith("http://127.0.0.1:1", expect.objectContaining({ defaultProfile: "p-1" }));
     expect((tauri as any).restartSession).not.toHaveBeenCalled();
   });

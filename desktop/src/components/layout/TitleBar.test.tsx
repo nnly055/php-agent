@@ -47,4 +47,18 @@ describe("TitleBar 配置入口", () => {
     render(<TitleBar />);
     expect(screen.getByText("GLM▸glm-4.7")).toBeInTheDocument();
   });
+
+  it("selection 为空时回落默认档首个模型，不使用全局 defaultModel（显示=实际）", () => {
+    // defaultModel ≠ 默认档首个模型：服务端从不使用 defaultModel，显示它就是谎报
+    useUiStore.getState().setProfilesPayload({
+      profiles: [
+        { id: "p-1", name: "OpenAI", provider: "openai", apiKey: "", baseUrl: "", models: ["gpt-4o"] },
+        { id: "p-2", name: "GLM", provider: "zhipu", apiKey: "", baseUrl: "", models: ["glm-4.6"] },
+      ],
+      defaultProfile: "p-1",
+      defaultModel: "wrong-default",
+    });
+    render(<TitleBar />);
+    expect(screen.getByText("OpenAI▸gpt-4o")).toBeInTheDocument();
+  });
 });
