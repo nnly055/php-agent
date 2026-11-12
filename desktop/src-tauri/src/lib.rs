@@ -223,6 +223,8 @@ fn open_session_inner(
             Ok((session_id, port))
         }
         Err(e) => {
+            // 失败必须可见：spawn 错误此前只进事件通道（tab 未建时前端无处显示），终端一片安静
+            eprintln!("[php-agent] 启动 sidecar 失败 (workspace={workspace}): {e}");
             let _ = app.emit(
                 "backend://error",
                 serde_json::json!({ "sessionId": session_id, "message": e }),

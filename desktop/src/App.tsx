@@ -140,6 +140,10 @@ export default function App() {
     try {
       const opened = await openProject(path);
       openTab(path, opened);
+    } catch (e) {
+      // 不再静默吞掉打开失败（此前失败只留一条无 tab 的 error 事件，界面毫无反馈）
+      console.error("打开项目失败:", e);
+      window.alert(`打开项目失败：${typeof e === "string" ? e : (e as any)?.message ?? "未知错误"}`);
     } finally {
       setBooting(null);
     }
