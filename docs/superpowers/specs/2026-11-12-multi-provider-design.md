@@ -16,10 +16,11 @@ LLM client（`AgentLoop` 持 readonly `$client`），切换必须重启进程。
 - **每平台多模型**：自由编辑的模型字符串列表
 - **对话内切换**：聊天输入区选择「平台 ▸ 模型」，**下一条消息即用新模型**，
   会话历史无缝延续（归一化消息格式本就 provider 无关）
+- **按会话记忆模型**：每个对话持久化自己的 profile/model 选择（切走再切回不丢）；
+  新对话默认用全局默认档
 - **保存即生效**：设置保存后 HTTP 热更新运行中的 sidecar，加新平台/改 key 都无需重启
 
-本轮不做（明确排除）：每项目独立的 profiles 覆盖；按会话记忆选择（选择是 tab 级
-瞬态，重启 app 后回落全局默认）；平台连通性后台巡检。
+本轮不做（明确排除）：每项目独立的 profiles 覆盖；平台连通性后台巡检。
 
 ## 关键决策记录
 
@@ -27,7 +28,7 @@ LLM client（`AgentLoop` 持 readonly `$client`），切换必须重启进程。
 |---|---|---|
 | 切换粒度 | per-turn：`/agent` 请求携带 `profile_id`/`model` | 服务端无可变选择状态；天然支持每轮不同；历史照常走 SessionStore |
 | 凭据下发 | spawn 注入默认档（env，向后兼容）+ `POST /config/profiles` 热更新全集 | 改 key/加平台无需重启；sidecar 重启后凭据仍在（env 兜底默认档） |
-| 作用域 | profiles 全局一份；tab 级瞬态选择 | API key 是机器级心智；项目级覆盖 YAGNI |
+| 作用域 | profiles 目录全局一份；**模型选择按会话持久化**（`SessionMeta.profileId/model`，随 `/agent` 每轮落盘） | API key 是机器级心智；「哪个对话用哪个模型」是对话自身属性，切走切回应保持 |
 | CLI 兼容 | `bin/agent` 单 provider env 行为完全不变 | CLI 不经过 AgentServer/Registry |
 | 持久化 | desktop.json：`config` → `profiles[]` + `defaultProfile` + `defaultModel`；旧 config 迁移为首档 | 单文件惯例；serde default 向后兼容 |
 | 客户端实例 | Registry 按 profileId+model 惰性构造并缓存（`Config::fromArray` 临时实例 → 现成 client 类） | 不与 AgentKernel 单实例缓存混用（键不同） |
@@ -75,7 +76,13 @@ final class ProfileRegistry
 - `GET /config/profiles`：回传 `{profiles, defaultProfile}`（**含 key**，设置页回显编辑）
 - `/agent` 请求体新增可选 `profile_id`、`model`：handleAgent 先
   `registry->resolve(...)` → `loop->setClient(...)` → `registry->setActiveClient(...)`
-  → 跑循环。未携带 → 默认档（行为与今天一致）
+  → 跑循环。未携带 → 该会话已存选择（meta），再退到默认档（行为与今天一致）
+- **会话选择持久化**：`SessionMeta` 增加 `?string $profileId`、`?string $model`
+  （`toArray/fromArray` 同步；旧数据 fromArray 缺省 null = 继承全局默认）。
+  `SessionStore::save` 签名追加可选 `?array $selection = null`（`['profileId','model']`），
+  四个实现（memory/json/sqlite3/redis）随 meta 落盘。`/agent` 每轮把本次选择传入 save；
+  `GET /sessions` 的 meta、`GET /sessions/{id}` 响应（新增 `meta` 字段）都回传选择，
+  供前端恢复下拉态
 
 **压缩跟随**（plugins/compact）：Compactor 未显式配置 `compactProvider` 时改用
 `registry->activeClient()`（压缩摘要与当前对话同一 provider/model）；显式配置
@@ -118,10 +125,11 @@ pub profiles: Vec<ProfileConfig>, default_profile: Option<String>, default_model
   - 「测试连接」对当前编辑平台取值（沿用 /config/test）
   - 「保存」：`saveProfiles` → 对每个已连接 tab `pushProfiles` → 更新 useUiStore →
     关闭。**不再重启 sidecar**
-- **Composer 切换器**：输入区上方一行「平台 ▸ 模型」下拉（数据 = useUiStore.profiles；
-  tab 当前选择存 projectStore 瞬态字段 `selection: {profileId, model}`，默认取全局
-  默认）；`send` 时携带给 `agentStream`
-- **TitleBar**：徽章显示当前 tab 选择 `name ▸ model`（无选择时显示默认档）；无任何
+- **Composer 切换器**：输入区上方一行「平台 ▸ 模型」下拉（数据 = useUiStore.profiles）。
+  选择是**当前会话的状态**：存 projectStore `selection: {profileId, model}`，随
+  `setActiveSession` 从会话 meta 恢复（新会话/无记录 → 全局默认）；用户改变后立即生效
+  于下一条消息，并在该轮落盘到会话 meta
+- **TitleBar**：徽章显示当前会话的选择 `name ▸ model`（无记录时显示默认档）；无任何
   profile 时橙色「未配置」逻辑保留（改为 profiles 为空判断）
 - **ChatView/MessageBubble**：无改动（历史消息与 provider 无关）
 
@@ -139,7 +147,8 @@ pub profiles: Vec<ProfileConfig>, default_profile: Option<String>, default_model
 
 | 场景 | 行为 |
 |---|---|
-| profile_id 不存在（被删/旧 tab 缓存） | `/agent` 400 `{error}`，前端显示为该轮错误消息 |
+| profile_id 不存在（被删/会话存的旧选择失效） | `/agent` 400 `{error}`，前端显示为该轮错误消息；用户重新选择即可 |
+| 会话 meta 无选择记录（旧会话） | 继承全局默认档 |
 | model 不在列表 | 容忍（自由文本语义）；空则用 profile 首个模型 |
 | pushProfiles 404（旧内核） | 前端提示「该项目需重启后生效」，不阻塞保存 |
 | profiles 全部删除 | saveProfiles 校验拒绝（至少保留一个）；default 不在其中 → 400 |
@@ -158,8 +167,10 @@ pub profiles: Vec<ProfileConfig>, default_profile: Option<String>, default_model
   1. 设置里配 DeepSeek + GLM 两平台各 2 个模型 → 保存 → **无重启**，对话下拉立即可选
   2. 对话中途切换 → 下一条消息由新模型回答，历史延续
   3. 对话进行中新增第三平台 → 保存 → 无重启即可选用
-  4. 重启 app → 默认档自动生效；CLI `bin/agent` 行为不变
-  5. key 不出现在日志/审计；desktop.json 权限 0600
+  4. 会话 A 用 DeepSeek、会话 B 用 GLM → 切走再切回，各自下拉保持各自选择；
+     重启 app 后打开会话同样恢复
+  5. 重启 app → 新对话默认档自动生效；CLI `bin/agent` 行为不变
+  6. key 不出现在日志/审计；desktop.json 权限 0600
 
 ## 验收标准
 
