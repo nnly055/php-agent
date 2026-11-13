@@ -85,6 +85,18 @@ const parsePairs = (text: string, sep: string): Record<string, string> => {
   return out;
 };
 
+/** 层级读取错误横幅：替代该层的表单（防误在不可读层上编辑/保存），提供重试 */
+function McpErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="space-y-2 rounded-md border border-border p-3">
+      <p className="text-xs text-danger">✗ {message}</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        重试
+      </Button>
+    </div>
+  );
+}
+
 export function SettingsDialog({
   testUrl,
   activeWorkspace,
@@ -103,6 +115,10 @@ export function SettingsDialog({
   // null = 未加载；mcpLoaded 防同一次打开内切 tab 重复拉取
   const [mcpDraft, setMcpDraft] = useState<McpDraft | null>(null);
   const [mcpLoaded, setMcpLoaded] = useState(false);
+  /** 分层读取错误（损坏/不可读）：该层禁用保存并显示重试，防用空数据覆盖真实配置 */
+  const [mcpErrors, setMcpErrors] = useState<{ global?: string | null; project?: string | null } | null>(null);
+  /** 整体加载失败（invoke rejection，如 workspace 未登记）：保存按钮禁用，仅可重试 */
+  const [mcpLoadError, setMcpLoadError] = useState<string | null>(null);
 
   // 打开时回填：优先 useUiStore 目录缓存（App 启动已拉取）；无缓存时 getProfiles 兜底。
   // 重置 tab 与 MCP 草稿：每次打开都从磁盘重读（.mcp.json 可能被外部编辑过）
@@ -112,6 +128,8 @@ export function SettingsDialog({
     setTab("profiles");
     setMcpDraft(null);
     setMcpLoaded(false);
+    setMcpErrors(null);
+    setMcpLoadError(null);
     const cached = useUiStore.getState().profilesPayload;
     if (cached) {
       setDraft(clonePayload(cached));
@@ -122,7 +140,7 @@ export function SettingsDialog({
     }
   }, [open]);
 
-  // 首次切到 MCP tab 时拉取两层配置
+  // 首次切到 MCP tab 时拉取两层配置；重试按钮重置 mcpLoaded 后走同一 effect
   useEffect(() => {
     if (!open || tab !== "mcp" || mcpLoaded) return;
     getMcp(activeWorkspace ?? null)
@@ -131,13 +149,23 @@ export function SettingsDialog({
           global: p.global.map(toMcpDraft),
           project: p.project ? p.project.map(toMcpDraft) : null,
         });
+        const errs = p.errors;
+        setMcpErrors(errs && (errs.global || errs.project) ? errs : null);
         setMcpLoaded(true);
       })
       .catch((e: any) => {
         setMcpLoaded(true);
-        setResult({ ok: false, message: (typeof e === "string" ? e : e?.message) ?? "MCP 配置读取失败" });
+        setMcpLoadError((typeof e === "string" ? e : e?.message) ?? "MCP 配置读取失败");
       });
   }, [open, tab, mcpLoaded, activeWorkspace]);
+
+  /** 重试：清空加载态，effect 重新拉取 */
+  function retryMcp() {
+    setMcpDraft(null);
+    setMcpErrors(null);
+    setMcpLoadError(null);
+    setMcpLoaded(false);
+  }
 
   function updateProfile(idx: number, patch: Partial<Profile>) {
     setDraft((d) =>
@@ -310,7 +338,17 @@ export function SettingsDialog({
   }
 
   async function saveMcp() {
-    if (!mcpDraft) return;
+    if (!mcpDraft || mcpLoadError) return;
+    // 读取失败的层必须先修复再重试：该层草稿为空/不完整，保存会覆盖真实配置
+    // （项目层损坏时 draft.project 为 null，须用 activeWorkspace 判断，否则守卫被跳过）
+    if (mcpErrors?.global) {
+      setResult({ ok: false, message: "全局 mcp.json 读取失败，请修复后点重试；本次未保存" });
+      return;
+    }
+    if (activeWorkspace && mcpErrors?.project) {
+      setResult({ ok: false, message: "项目 .mcp.json 读取失败，请修复后点重试；本次未保存" });
+      return;
+    }
     const g = parseMcpSection(mcpDraft.global);
     if (typeof g === "string") {
       setResult({ ok: false, message: g });
@@ -392,7 +430,7 @@ export function SettingsDialog({
                   <span className="text-sm text-muted">参数（每行一个）</span>
                   <Textarea
                     value={s.argsText}
-                    placeholder={"每行一个参数，如 -y server"}
+                    placeholder={"每行一个参数（不经 shell 解析）"}
                     rows={2}
                     className="font-mono"
                     onChange={(e) => updateMcp(section, i, { argsText: e.target.value })}
@@ -645,25 +683,48 @@ export function SettingsDialog({
 
         {tab === "mcp" && (
           <div className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-baseline justify-between">
-                <span className="text-sm font-medium text-ink">全局 MCP</span>
-                <span className="text-xs text-muted">对所有项目生效</span>
-              </div>
-              {renderMcpCards(mcpDraft?.global ?? null, "global")}
-              {addMcpButton("global")}
-            </div>
-            {activeWorkspace ? (
-              <div className="space-y-2">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-sm font-medium text-ink">当前项目 MCP</span>
-                  <span className="text-xs text-muted">覆盖同名全局条目</span>
-                </div>
-                {renderMcpCards(mcpDraft?.project ?? null, "project")}
-                {addMcpButton("project")}
+            {mcpLoadError ? (
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <p className="text-xs text-danger">✗ {mcpLoadError}</p>
+                <Button variant="outline" size="sm" onClick={retryMcp}>
+                  重试
+                </Button>
               </div>
             ) : (
-              <p className="text-sm text-muted">未打开项目，仅可编辑全局配置。</p>
+              <>
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-sm font-medium text-ink">全局 MCP</span>
+                    <span className="text-xs text-muted">对所有项目生效</span>
+                  </div>
+                  {mcpErrors?.global ? (
+                    <McpErrorBanner message={mcpErrors.global} onRetry={retryMcp} />
+                  ) : (
+                    <>
+                      {renderMcpCards(mcpDraft?.global ?? null, "global")}
+                      {addMcpButton("global")}
+                    </>
+                  )}
+                </div>
+                {activeWorkspace ? (
+                  <div className="space-y-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-sm font-medium text-ink">当前项目 MCP</span>
+                      <span className="text-xs text-muted">覆盖同名全局条目</span>
+                    </div>
+                    {mcpErrors?.project ? (
+                      <McpErrorBanner message={mcpErrors.project} onRetry={retryMcp} />
+                    ) : (
+                      <>
+                        {renderMcpCards(mcpDraft?.project ?? null, "project")}
+                        {addMcpButton("project")}
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted">未打开项目，仅可编辑全局配置。</p>
+                )}
+              </>
             )}
           </div>
         )}
@@ -683,7 +744,7 @@ export function SettingsDialog({
           )}
           <Button
             size="sm"
-            disabled={saving}
+            disabled={saving || (tab === "mcp" && (!mcpDraft || !!mcpLoadError))}
             onClick={() => (tab === "mcp" ? saveMcp() : save())}
           >
             {saving ? "保存中…" : "保存"}

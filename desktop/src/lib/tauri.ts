@@ -32,7 +32,12 @@ export type McpServer = {
   url: string; headers: Record<string, string>;
   timeout?: number | null;
 };
-export type McpPayload = { global: McpServer[]; project: McpServer[] | null };
+export type McpPayload = {
+  global: McpServer[];
+  project: McpServer[] | null;
+  /** 层级读取错误（损坏/不可读）：字符串 = 该层不可用（UI 禁用该层保存并显示重试），null = 正常 */
+  errors?: { global?: string | null; project?: string | null };
+};
 export const getMcp = (workspace?: string | null) =>
   invoke<McpPayload>("get_mcp", { workspace: workspace ?? null });
 export const saveMcpGlobal = (servers: McpServer[]) =>

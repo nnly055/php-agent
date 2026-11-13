@@ -329,4 +329,62 @@ describe("SettingsDialog MCP 配置", () => {
     expect(tauri.saveMcpGlobal).not.toHaveBeenCalled();
     expect(tauri.saveMcpProject).not.toHaveBeenCalled();
   });
+
+  it("分层错误：项目 .mcp.json 损坏 → 项目区错误+重试，保存被拦截", async () => {
+    (tauri.getMcp as any).mockResolvedValue({
+      global: [{ name: "fs", command: "npx", args: [], env: {}, url: "", headers: {}, timeout: null }],
+      project: null,
+      errors: { global: null, project: "/tmp/ws/.mcp.json 不是合法 JSON" },
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} activeWorkspace="/tmp/ws" />);
+    fireEvent.click(screen.getByText("MCP"));
+    await waitFor(() => expect(screen.getAllByPlaceholderText(/server 名称/)).toHaveLength(1));
+    // 项目区只显示错误与重试，不显示「尚无 server」空态与添加按钮（全局区不受拖累）
+    expect(screen.getByText(/不是合法 JSON/)).toBeInTheDocument();
+    expect(screen.getAllByText("添加 server")).toHaveLength(1);
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(screen.getByText(/本次未保存/)).toBeInTheDocument());
+    expect(tauri.saveMcpGlobal).not.toHaveBeenCalled();
+    expect(tauri.saveMcpProject).not.toHaveBeenCalled();
+    // 重试成功后恢复：两层都可编辑
+    (tauri.getMcp as any).mockResolvedValue({
+      global: [{ name: "fs", command: "npx", args: [], env: {}, url: "", headers: {}, timeout: null }],
+      project: [],
+      errors: { global: null, project: null },
+    });
+    fireEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(screen.getAllByText("添加 server")).toHaveLength(2));
+    expect(screen.queryByText(/不是合法 JSON/)).not.toBeInTheDocument();
+  });
+
+  it("加载整体失败：错误 + 重试，保存禁用", async () => {
+    (tauri.getMcp as any).mockRejectedValueOnce("后端炸了");
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} activeWorkspace="/tmp/ws" />);
+    fireEvent.click(screen.getByText("MCP"));
+    await waitFor(() => expect(screen.getByText(/后端炸了/)).toBeInTheDocument());
+    expect(screen.getByText("保存")).toBeDisabled();
+    // 重试（Once → 落回默认成功 mock）后恢复
+    fireEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(screen.getByText("保存")).toBeEnabled());
+    expect((tauri.getMcp as any).mock.calls).toHaveLength(2);
+  });
+
+  it("同名校验拦截：保存报错且不调用", async () => {
+    (tauri.getMcp as any).mockResolvedValue({
+      global: [
+        { name: "fs", command: "a", args: [], env: {}, url: "", headers: {}, timeout: null },
+        { name: "fs", command: "b", args: [], env: {}, url: "", headers: {}, timeout: null },
+      ],
+      project: null,
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} activeWorkspace="/tmp/ws" />);
+    fireEvent.click(screen.getByText("MCP"));
+    await waitFor(() => expect(screen.getAllByPlaceholderText(/server 名称/)).toHaveLength(2));
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(screen.getByText(/重复/)).toBeInTheDocument());
+    expect(tauri.saveMcpGlobal).not.toHaveBeenCalled();
+  });
 });
