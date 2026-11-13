@@ -213,4 +213,38 @@ final class HttpTransportTest extends TestCase
         self::assertSame(['type' => 'base64', 'media_type' => 'image/png', 'data' => base64_encode('abc')], $block['source']);
         self::assertSame('text', $body['messages'][0]['content'][1]['type']);
     }
+
+    public function testOpenAiBodyMapsImageParts(): void
+    {
+        $capture = (string) tempnam(sys_get_temp_dir(), 'php-agent-body-');
+        $client = $this->openAiClient($capture);
+        $messages = [['role' => 'user', 'content' => [
+            ['type' => 'image', 'media_type' => 'image/png', 'data' => base64_encode('abc')],
+            ['type' => 'text', 'text' => '这是什么'],
+        ]]];
+        foreach ($client->stream($messages, [], 'sys') as $event) { }
+        $body = json_decode((string) file_get_contents($capture), true);
+        unlink($capture);
+        $content = $body['messages'][1]['content']; // [0] 是 system
+        self::assertIsArray($content);
+        self::assertSame(['type' => 'text', 'text' => '这是什么'], $content[0]);
+        self::assertSame('image_url', $content[1]['type']);
+        self::assertSame('data:image/png;base64,' . base64_encode('abc'), $content[1]['image_url']['url']);
+    }
+
+    public function testOpenAiBodyToolResultTurnStaysString(): void
+    {
+        // 回归：tool_result 回合不因 image 改造而变化
+        $capture = (string) tempnam(sys_get_temp_dir(), 'php-agent-body-');
+        $client = $this->openAiClient($capture);
+        $messages = [
+            ['role' => 'assistant', 'content' => [['type' => 'tool_use', 'id' => 't1', 'name' => 'run_command', 'input' => ['command' => 'ls']]]],
+            ['role' => 'user', 'content' => [['type' => 'tool_result', 'tool_use_id' => 't1', 'content' => 'out']]],
+        ];
+        foreach ($client->stream($messages, [], 'sys') as $event) { }
+        $body = json_decode((string) file_get_contents($capture), true);
+        unlink($capture);
+        self::assertSame('tool', $body['messages'][2]['role']);
+        self::assertSame('out', $body['messages'][2]['content']);
+    }
 }

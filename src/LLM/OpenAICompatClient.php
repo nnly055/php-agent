@@ -147,6 +147,7 @@ final class OpenAICompatClient extends BaseSseClient
                 case 'user':
                     $texts = [];
                     $toolResults = [];
+                    $imageParts = [];
                     foreach ($msg['content'] as $block) {
                         if ($block['type'] === 'text') {
                             $texts[] = $block['text'];
@@ -156,16 +157,33 @@ final class OpenAICompatClient extends BaseSseClient
                                 'tool_call_id' => $block['tool_use_id'],
                                 'content' => (string) $block['content'],
                             ];
+                        } elseif ($block['type'] === 'image') {
+                            $imageParts[] = [
+                                'type' => 'image_url',
+                                'image_url' => [
+                                    'url' => 'data:' . $block['media_type'] . ';base64,' . $block['data'],
+                                ],
+                            ];
                         }
                     }
-                    if ($toolResults !== []) {
+                    $text = implode("\n", $texts);
+                    if ($imageParts !== []) {
+                        // 含图回合：content 升级为 vision parts 数组（text 非空才加 text part）
+                        if ($toolResults !== []) {
+                            // OpenAI 要求 tool 结果紧跟在带 tool_calls 的 assistant 消息之后
+                            array_push($out, ...$toolResults);
+                        }
+                        $out[] = ['role' => 'user', 'content' => $texts !== [] && trim($text) !== ''
+                            ? [['type' => 'text', 'text' => $text], ...$imageParts]
+                            : $imageParts];
+                    } elseif ($toolResults !== []) {
                         // OpenAI 要求 tool 结果紧跟在带 tool_calls 的 assistant 消息之后
                         array_push($out, ...$toolResults);
-                        if ($texts !== [] && trim(implode("\n", $texts)) !== '') {
-                            $out[] = ['role' => 'user', 'content' => implode("\n", $texts)];
+                        if ($texts !== [] && trim($text) !== '') {
+                            $out[] = ['role' => 'user', 'content' => $text];
                         }
                     } else {
-                        $out[] = ['role' => 'user', 'content' => implode("\n", $texts)];
+                        $out[] = ['role' => 'user', 'content' => $text];
                     }
                     break;
 
