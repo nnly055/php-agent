@@ -25,6 +25,21 @@ export const getProfiles = () => invoke<ProfilesPayload>("get_profiles");
 export const saveProfiles = (payload: ProfilesPayload) =>
   invoke<void>("save_profiles", { profiles: payload.profiles, defaultProfile: payload.defaultProfile, defaultModel: payload.defaultModel });
 
+/** 一个 MCP server 条目：字段与 Rust McpServerEntry serde camelCase 对齐；timeout null = 默认 30 秒 */
+export type McpServer = {
+  name: string;
+  command: string; args: string[]; env: Record<string, string>;
+  url: string; headers: Record<string, string>;
+  timeout?: number | null;
+};
+export type McpPayload = { global: McpServer[]; project: McpServer[] | null };
+export const getMcp = (workspace?: string | null) =>
+  invoke<McpPayload>("get_mcp", { workspace: workspace ?? null });
+export const saveMcpGlobal = (servers: McpServer[]) =>
+  invoke<void>("save_mcp_global", { servers });
+export const saveMcpProject = (workspace: string, servers: McpServer[]) =>
+  invoke<void>("save_mcp_project", { workspace, servers });
+
 export type BackendEvent =
   | { kind: "ready"; sessionId: string; port: number; workspace: string }
   | { kind: "disconnected"; sessionId: string }
