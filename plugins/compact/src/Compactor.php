@@ -31,6 +31,13 @@ TXT;
 
     private const TOKEN_DIVISOR = 2.5; // 字符→token 保守估算（中英混合，宁大勿小）
 
+    /**
+     * image 块的固定 token 成本。base64 data 是传输形态，不代表模型的 token 占用，
+     * 1600 ≈ 单图实际视觉 token 量级；若不剥离而按 JSON 长度把 base64 计入估算，
+     * 一张大图（>~480KB）会让历史永久越过压缩阈值，工具循环每轮都触发多余的总结请求。
+     */
+    private const IMAGE_TOKEN_COST = 1600;
+
     public function __construct(
         private readonly LLMClient $client,
         private readonly int $contextTokens = 128000,
@@ -38,7 +45,11 @@ TXT;
     ) {
     }
 
-    /** 保守估算：JSON 字符数 + system 长度，除以固定除数向上取整 */
+    /**
+     * 保守估算：JSON 字符数 + system 长度，除以固定除数向上取整。
+     * image 块不计 base64——在副本中整体剔除（原历史绝不被改动），
+     * 每块改按 IMAGE_TOKEN_COST 固定计费。
+     */
     public static function estimateTokens(array $messages, string $system = ''): int
     {
         // 空历史 + 空 system 直接返回 0：json_encode([]) 会产生 '[]' 两个字符，
@@ -46,9 +57,42 @@ TXT;
         if ($messages === [] && $system === '') {
             return 0;
         }
-        $chars = mb_strlen(json_encode($messages, JSON_UNESCAPED_UNICODE) ?: '')
+        [$stripped, $imageCount] = self::withoutImageBlocks($messages);
+        $chars = mb_strlen(json_encode($stripped, JSON_UNESCAPED_UNICODE) ?: '')
             + mb_strlen($system);
-        return (int) ceil($chars / self::TOKEN_DIVISOR);
+        return (int) ceil($chars / self::TOKEN_DIVISOR) + $imageCount * self::IMAGE_TOKEN_COST;
+    }
+
+    /**
+     * 深拷贝消息并剔除 image 块，返回 [副本, 图片块数]。只写副本、原历史不动：
+     * base64 是传输形态不代表 token 占用，剔除后 JSON 长度与无图历史完全一致，
+     * 图片成本统一由 IMAGE_TOKEN_COST 承担。
+     *
+     * @return array{0: array<int, mixed>, 1: int}
+     */
+    private static function withoutImageBlocks(array $messages): array
+    {
+        $imageCount = 0;
+        $stripped = [];
+        foreach ($messages as $message) {
+            $blocks = is_array($message) ? ($message['content'] ?? null) : null;
+            if (!is_array($blocks)) {
+                $stripped[] = $message;
+                continue;
+            }
+            $kept = [];
+            foreach ($blocks as $block) {
+                if (is_array($block) && ($block['type'] ?? '') === 'image') {
+                    ++$imageCount;
+                    continue;
+                }
+                $kept[] = $block;
+            }
+            $copy = $message;
+            $copy['content'] = $kept;
+            $stripped[] = $copy;
+        }
+        return [$stripped, $imageCount];
     }
 
     /** 估算达到「窗口 × 阈值」即触发 */

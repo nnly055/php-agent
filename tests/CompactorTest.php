@@ -149,6 +149,21 @@ final class CompactorTest extends TestCase
         self::assertSame($snapshot, $messages); // 历史原样保留
     }
 
+    public function testEstimateTokensIgnoresBase64Payload(): void
+    {
+        $big = str_repeat('A', 6 * 1024 * 1024); // base64 形态的大图数据
+        $messages = [
+            ['role' => 'user', 'content' => [
+                ['type' => 'image', 'media_type' => 'image/png', 'data' => $big],
+                ['type' => 'text', 'text' => '短文本'],
+            ]],
+        ];
+        $t = Compactor::estimateTokens($messages, '');
+        // 固定成本 1600 + 短文本估算，远小于 base64 字符数贡献（6MB/2.5 ≈ 250 万 token）
+        self::assertLessThan(5000, $t);
+        self::assertSame(Compactor::estimateTokens([['role' => 'user', 'content' => [['type' => 'text', 'text' => '短文本']]]], '') + 1600, $t);
+    }
+
     public function testCompactEmptySummaryIsFailure(): void
     {
         // FakeLLM 脚本播完后的兜底文本会返回内容，这里用只 yield 非文本事件的客户端
