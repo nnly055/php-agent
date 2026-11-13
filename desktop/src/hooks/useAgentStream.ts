@@ -1,14 +1,14 @@
 import { useCallback } from "react";
-import { agentStream, confirm as apiConfirm, listSessions } from "../lib/api";
+import { agentStream, confirm as apiConfirm, listSessions, type ImageAttachment } from "../lib/api";
 import { useProjectStore } from "../store/useProjectStore";
 
 /** 当前项目（Provider 内）的回合发送/授权应答/中止。 */
 export function useAgentStream() {
   const store = useProjectStore();
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, images?: ImageAttachment[]) => {
     const st = store.getState();
-    if (st.streaming || !text.trim()) return;
+    if (st.streaming || (!text.trim() && !images?.length)) return;
     const sessionId = st.activeSession || `web-${Date.now().toString(36)}`;
     if (!st.activeSession) {
       store.getState().setActiveSession(sessionId);
@@ -17,13 +17,14 @@ export function useAgentStream() {
         store.getState().setSelection(st.selection);
       }
     }
-    store.getState().beginTurn(text);
+    store.getState().beginTurn(text, images);
     const ac = new AbortController();
     // store.streamAbort 为唯一来源：切会话（setActiveSession）会 abort 它防跨会话串数据。
     store.getState().setStreamAbort(ac);
     try {
       // 第 5 参携带本轮平台/模型选择；均缺省时 store 值为 {null,null}，agentStream 不会发送对应键
-      for await (const ev of agentStream(st.backendUrl, text, sessionId, ac.signal, st.selection ?? undefined)) {
+      // 第 6 参携带图片附件（camelCase），由 agentStream 在 wire 上映射为 snake_case
+      for await (const ev of agentStream(st.backendUrl, text, sessionId, ac.signal, st.selection ?? undefined, images)) {
         store.getState().applyEvent(ev);
       }
     } catch (e: any) {

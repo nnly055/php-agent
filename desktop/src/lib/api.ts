@@ -43,8 +43,11 @@ export const confirm = (baseUrl: string, id: string, decision: "y" | "n" | "a") 
 /** 本轮对话的模型选择：均缺省 → 沿用后端默认档（线上不携带对应键） */
 export type TurnSelection = { profileId?: string | null; model?: string | null };
 
+/** 随消息发送的图片附件（camelCase 域内表示；wire 上映射为 snake_case 的 images） */
+export type ImageAttachment = { mediaType: string; data: string };
+
 /** POST /agent → SSE 事件异步迭代器 */
-export async function* agentStream(baseUrl: string, message: string, sessionId: string, signal?: AbortSignal, selection?: TurnSelection): AsyncGenerator<AgentEvent> {
+export async function* agentStream(baseUrl: string, message: string, sessionId: string, signal?: AbortSignal, selection?: TurnSelection, images?: ImageAttachment[]): AsyncGenerator<AgentEvent> {
   const resp = await fetch(baseUrl + "/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -53,6 +56,8 @@ export async function* agentStream(baseUrl: string, message: string, sessionId: 
       session_id: sessionId,
       ...(selection?.profileId ? { profile_id: selection.profileId } : {}),
       ...(selection?.model ? { model: selection.model } : {}),
+      // 图片仅在有内容时上送，线上键名为 snake_case 的 images
+      ...(images?.length ? { images: images.map(i => ({ media_type: i.mediaType, data: i.data })) } : {}),
     }),
     signal,
   });

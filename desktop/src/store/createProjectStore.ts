@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AgentEvent } from "../lib/sse";
-import type { SessionMeta, Status } from "../lib/api";
+import type { ImageAttachment, SessionMeta, Status } from "../lib/api";
 
 export type ToolCard = {
   id: string; name: string; input: any; result?: string;
@@ -9,6 +9,8 @@ export type ToolCard = {
 export type ChatMessage = {
   id: string; role: "user" | "assistant" | "notice" | "error";
   text: string; tools: ToolCard[];
+  // 用户消息随附的图片（仅非空时携带）
+  images?: ImageAttachment[];
 };
 export type PendingConfirm = { id: string; tool: string; input: any; preview: string };
 
@@ -39,7 +41,7 @@ type State = {
   setSelection: (s: { profileId: string | null; model: string | null }) => void;
   setStreamAbort: (c: AbortController | null) => void;
   setError: (e: string | null) => void;
-  beginTurn: (text: string) => void;
+  beginTurn: (text: string, images?: ImageAttachment[]) => void;
   applyEvent: (ev: AgentEvent) => void;
   setPendingConfirm: (c: PendingConfirm | null) => void;
   endTurn: () => void;
@@ -84,13 +86,13 @@ export function createProjectStore() {
     setStreamAbort: (c) => set({ streamAbort: c }),
     setError: (e) => set({ error: e }),
 
-    beginTurn: (text) =>
+    beginTurn: (text, images) =>
       set((st) => ({
         streaming: true,
         error: null,
         messages: [
           ...st.messages,
-          { id: nid(), role: "user", text, tools: [] },
+          { id: nid(), role: "user", text, tools: [], ...(images?.length ? { images } : {}) },
           { id: nid(), role: "assistant", text: "", tools: [] },
         ],
       })),

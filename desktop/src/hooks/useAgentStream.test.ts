@@ -51,7 +51,7 @@ describe("useAgentStream.answerConfirm", () => {
     const { result } = renderHook(() => useAgentStream());
     await act(async () => { await result.current.send("带选择发送"); });
     expect(api.agentStream).toHaveBeenCalledWith(
-      expect.any(String), "带选择发送", "s-sel", expect.any(AbortSignal), { profileId: "p-9", model: "m-9" },
+      expect.any(String), "带选择发送", "s-sel", expect.any(AbortSignal), { profileId: "p-9", model: "m-9" }, undefined,
     );
   });
 
@@ -61,7 +61,7 @@ describe("useAgentStream.answerConfirm", () => {
     const { result } = renderHook(() => useAgentStream());
     await act(async () => { await result.current.send("默认发送"); });
     expect(api.agentStream).toHaveBeenLastCalledWith(
-      expect.any(String), "默认发送", "s-def", expect.any(AbortSignal), { profileId: null, model: null },
+      expect.any(String), "默认发送", "s-def", expect.any(AbortSignal), { profileId: null, model: null }, undefined,
     );
   });
 
@@ -73,7 +73,7 @@ describe("useAgentStream.answerConfirm", () => {
     await act(async () => { await result.current.send("新会话首条"); });
     // 消息 1 携带用户所选
     expect(api.agentStream).toHaveBeenLastCalledWith(
-      expect.any(String), "新会话首条", expect.any(String), expect.any(AbortSignal), { profileId: "p-2", model: "glm-4.7" },
+      expect.any(String), "新会话首条", expect.any(String), expect.any(AbortSignal), { profileId: "p-2", model: "glm-4.7" }, undefined,
     );
     // send 完成后 store 仍保持所选（composer 不跳回默认档）
     expect(useAppStore.getState().selection).toEqual({ profileId: "p-2", model: "glm-4.7" });
@@ -85,7 +85,67 @@ describe("useAgentStream.answerConfirm", () => {
     await act(async () => { await result.current.send("未选发送"); });
     expect(useAppStore.getState().selection).toEqual({ profileId: null, model: null });
     expect(api.agentStream).toHaveBeenLastCalledWith(
-      expect.any(String), "未选发送", expect.any(String), expect.any(AbortSignal), { profileId: null, model: null },
+      expect.any(String), "未选发送", expect.any(String), expect.any(AbortSignal), { profileId: null, model: null }, undefined,
     );
+  });
+});
+
+describe("useAgentStream.send images 透传", () => {
+  beforeEach(() => { useAppStore.getState().reset(); vi.clearAllMocks(); });
+
+  it("send 把 images 透传给 agentStream 并进乐观用户气泡", async () => {
+    (api.agentStream as any).mockImplementationOnce(async function* () {});
+    useAppStore.getState().setActiveSession("s-img", []);
+    const img = { mediaType: "image/png", data: "AAAA" };
+    const { result } = renderHook(() => useAgentStream());
+    await act(async () => { await result.current.send("hi", [img]); });
+    // camelCase images 原样透传给 agentStream 第 6 参（snake_case 映射由 api 层负责）
+    expect(api.agentStream).toHaveBeenLastCalledWith(
+      expect.any(String), "hi", "s-img", expect.any(AbortSignal), { profileId: null, model: null }, [img],
+    );
+    expect(useAppStore.getState().messages[0]).toMatchObject({ role: "user", text: "hi", images: [img] });
+  });
+
+  it("未传 images 时第 6 参为 undefined，乐观气泡无 images 字段", async () => {
+    (api.agentStream as any).mockImplementationOnce(async function* () {});
+    useAppStore.getState().setActiveSession("s-plain", []);
+    const { result } = renderHook(() => useAgentStream());
+    await act(async () => { await result.current.send("纯文本"); });
+    const call = (api.agentStream as any).mock.calls.at(-1) as unknown[];
+    expect(call[5]).toBeUndefined();
+    expect(useAppStore.getState().messages[0].images).toBeUndefined();
+  });
+});
+
+describe("agentStream 请求体 images（真实 api 层，wire snake_case）", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  // 真实 agentStream 消费 fetch 的 SSE body：mock 流立即结束即可
+  const mockSseFetch = () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) },
+      json: async () => ({}),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+
+  it("携带 images 时请求体含 snake_case images", async () => {
+    const fetchMock = mockSseFetch();
+    const { agentStream: realAgentStream } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+    const gen = realAgentStream("", "hi", "s-wire", undefined, undefined, [{ mediaType: "image/png", data: "AAAA" }]);
+    expect((await gen.next()).done).toBe(true);
+    const body = JSON.parse((fetchMock.mock.calls[0] as any)[1].body);
+    expect(body.images).toEqual([{ media_type: "image/png", data: "AAAA" }]);
+  });
+
+  it("未传 images 时请求体不含 images 键（无空数组噪音）", async () => {
+    const fetchMock = mockSseFetch();
+    const { agentStream: realAgentStream } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+    const gen = realAgentStream("", "hi", "s-wire");
+    expect((await gen.next()).done).toBe(true);
+    const body = JSON.parse((fetchMock.mock.calls[0] as any)[1].body);
+    expect(body).not.toHaveProperty("images");
   });
 });
