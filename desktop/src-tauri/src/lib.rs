@@ -1,7 +1,7 @@
 pub mod sidecar;
 
 use sidecar::{project_slug, Sidecar, SidecarConfig};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
@@ -31,6 +31,33 @@ fn home_dir() -> String {
 
 fn desktop_json_path() -> PathBuf {
     PathBuf::from(home_dir()).join(".php-agent").join("desktop.json")
+}
+
+/// 全局 MCP 配置（所有项目共享）；格式与项目 .mcp.json 一致，PHP McpConfig::globalPath() 对齐
+fn global_mcp_path() -> PathBuf {
+    PathBuf::from(home_dir()).join(".php-agent").join("mcp.json")
+}
+
+/// 一个 MCP server 条目：name 必填（文件中以 map 键承载，写盘时剔除）；
+/// stdio = command(+args/env)，http = url(+headers)；timeout 秒，None = PHP 侧默认 30。
+/// 空字段不落盘（skip_serializing_if），与 Claude Code / Cursor 的 .mcp.json 形态一致。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerEntry {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<f64>,
 }
 
 /// 一个模型条目：name 为对话/请求所用模型名；contextTokens/maxTokens 为可选 per-model 参数
@@ -515,6 +542,97 @@ fn save_profiles(profiles: Vec<ProfileConfig>, default_profile: String, default_
     Ok(())
 }
 
+// ── MCP 配置（设置对话框「MCP」Tab；读写文件，重启项目后由 McpPlugin 生效）──
+
+/// 写盘前校验（镜像 PHP 语义）：名称非空唯一、command/url 二选一、timeout ≥ 1
+fn validate_mcp(entries: &[McpServerEntry]) -> Result<(), String> {
+    for e in entries {
+        if e.name.trim().is_empty() {
+            return Err("MCP server 名称不能为空".into());
+        }
+        let has_command = !e.command.trim().is_empty();
+        let has_url = !e.url.trim().is_empty();
+        if has_command == has_url {
+            return Err(format!("MCP server '{}'：command 与 url 必须二选一", e.name));
+        }
+        if let Some(t) = e.timeout {
+            if t < 1.0 {
+                return Err(format!("MCP server '{}'：timeout 须为 ≥ 1 的秒数", e.name));
+            }
+        }
+    }
+    for i in 0..entries.len() {
+        for j in (i + 1)..entries.len() {
+            if entries[i].name == entries[j].name {
+                return Err(format!("MCP server 名称重复: {}", entries[i].name));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 读一个 mcp.json：缺失 = 静默空；损坏 = Err（消息含路径）；条目非法 = Err（消息含 server 名）
+fn parse_mcp_file(path: &std::path::Path) -> Result<Vec<McpServerEntry>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return Ok(vec![]), // 缺失静默（含不可读），与 PHP「文件缺失 = no-op」对齐
+    };
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("MCP 配置 {} 不是合法 JSON", path.display()))?;
+    let servers = v.get("mcpServers").and_then(|m| m.as_object()).ok_or_else(|| {
+        format!("MCP 配置 {} 缺少 mcpServers 对象", path.display())
+    })?;
+    let mut entries = Vec::new();
+    for (name, item) in servers {
+        let mut e: McpServerEntry = serde_json::from_value(item.clone())
+            .map_err(|err| format!("MCP server '{}' 配置无效: {err}", name))?;
+        e.name = name.clone(); // name 以 map 键为准（文件条目不含 name 键）
+        entries.push(e);
+    }
+    Ok(entries)
+}
+
+/// 写一个 mcp.json：校验后逐条序列化并剔除 name 键（文件条目以 map 键承载名称）
+fn write_mcp_file(path: &std::path::Path, entries: &[McpServerEntry]) -> Result<(), String> {
+    validate_mcp(entries)?;
+    let mut map = serde_json::Map::new();
+    for e in entries {
+        let mut v = serde_json::to_value(e).map_err(|err| err.to_string())?;
+        if let Some(obj) = v.as_object_mut() {
+            obj.remove("name");
+        }
+        map.insert(e.name.clone(), v);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let text = serde_json::json!({ "mcpServers": serde_json::Value::Object(map) }).to_string();
+    std::fs::write(path, text).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn get_mcp(workspace: Option<String>) -> Result<serde_json::Value, String> {
+    let global = parse_mcp_file(&global_mcp_path())?;
+    let project = match workspace {
+        Some(ws) if !ws.is_empty() => {
+            let path = PathBuf::from(ws).join(".mcp.json");
+            Some(parse_mcp_file(&path)?)
+        }
+        _ => None,
+    };
+    Ok(serde_json::json!({ "global": global, "project": project }))
+}
+
+#[tauri::command]
+fn save_mcp_global(servers: Vec<McpServerEntry>) -> Result<(), String> {
+    write_mcp_file(&global_mcp_path(), &servers)
+}
+
+#[tauri::command]
+fn save_mcp_project(workspace: String, servers: Vec<McpServerEntry>) -> Result<(), String> {
+    write_mcp_file(&PathBuf::from(workspace).join(".mcp.json"), &servers)
+}
+
 #[tauri::command]
 fn get_workspace(state: State<AppState>, session_id: String) -> Result<String, String> {
     let guard = state.sessions.lock().unwrap();
@@ -578,7 +696,10 @@ pub fn run() {
             get_workspace,
             restart_session,
             get_profiles,
-            save_profiles
+            save_profiles,
+            get_mcp,
+            save_mcp_global,
+            save_mcp_project
         ])
         .setup(|_app| {
             // SIGINT/SIGTERM（含终端 Ctrl+C）→ 干净退出，杜绝孤儿 php sidecar。
@@ -737,5 +858,76 @@ mod tests {
         let mut empty = sample_profiles();
         empty[0].models[0].name = "".into();
         assert!(validate_profiles(&empty, "p-1").is_err(), "模型 name 空串拒绝");
+    }
+
+    // ── MCP 配置（get_mcp/save_mcp_*）──
+
+    /// 测试辅助：仅 name+command 的 MCP server 条目
+    fn mcp_entry(name: &str, command: &str) -> McpServerEntry {
+        McpServerEntry {
+            name: name.into(),
+            command: command.into(),
+            args: vec![],
+            env: Default::default(),
+            url: String::new(),
+            headers: Default::default(),
+            timeout: None,
+        }
+    }
+
+    #[test]
+    fn validate_mcp_rejects_bad_entries() {
+        assert!(validate_mcp(&[mcp_entry("a", "php")]).is_ok());
+        assert!(validate_mcp(&[mcp_entry("", "php")]).is_err(), "名称空");
+        assert!(
+            validate_mcp(&[mcp_entry("a", "php"), mcp_entry("a", "php")]).is_err(),
+            "名称重复"
+        );
+        let both = McpServerEntry { url: "https://a".into(), ..mcp_entry("b", "php") };
+        assert!(validate_mcp(&[both]).is_err(), "command/url 二选一");
+        assert!(validate_mcp(&[mcp_entry("b", "")]).is_err(), "两者皆空");
+        let bad_timeout = McpServerEntry { timeout: Some(0.5), ..mcp_entry("c", "php") };
+        assert!(validate_mcp(&[bad_timeout]).is_err(), "timeout < 1");
+    }
+
+    #[test]
+    fn mcp_file_round_trip_and_php_compat() {
+        let dir = std::env::temp_dir().join(format!("php-agent-mcp-rs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        let entries = vec![McpServerEntry {
+            args: vec!["-y".into()],
+            env: [("K".to_string(), "v".to_string())].into_iter().collect(),
+            timeout: Some(5.0),
+            ..mcp_entry("fs", "npx")
+        }];
+        write_mcp_file(&path, &entries).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let item = &v["mcpServers"]["fs"];
+        assert_eq!(item["command"], "npx");
+        assert_eq!(item["args"][0], "-y");
+        assert_eq!(item["env"]["K"], "v");
+        assert_eq!(item["timeout"], 5.0);
+        assert!(item.get("name").is_none(), "文件条目不含 name 键");
+        assert!(item.get("url").is_none(), "空 url 不落盘");
+        // PHP 兼容格式回读：name 从 map 键注入
+        let parsed = parse_mcp_file(&path).unwrap();
+        assert_eq!(parsed[0].name, "fs");
+        assert_eq!(parsed[0].args, vec!["-y".to_string()]);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn parse_mcp_file_errors() {
+        let dir = std::env::temp_dir().join(format!("php-agent-mcp-rs-e-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        assert_eq!(parse_mcp_file(&path).unwrap(), vec![], "缺失静默空");
+        std::fs::write(&path, "{ nope").unwrap();
+        assert!(parse_mcp_file(&path).is_err(), "损坏报错");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 }
