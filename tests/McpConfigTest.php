@@ -23,6 +23,7 @@ final class McpConfigTest extends TestCase
     protected function tearDown(): void
     {
         @unlink($this->workspace . '/.mcp.json');
+        @unlink($this->workspace . '-global.json');
         @rmdir($this->workspace);
     }
 
@@ -84,5 +85,59 @@ final class McpConfigTest extends TestCase
         self::assertArrayHasKey('good', $loaded['servers']);
         self::assertArrayNotHasKey('both', $loaded['servers']);
         self::assertArrayNotHasKey('neither', $loaded['servers']);
+    }
+
+    // ── 全局层（~/.php-agent/mcp.json）：项目同名整条覆盖 ──
+
+    private function writeGlobal(string $json): string
+    {
+        $global = $this->workspace . '-global.json';
+        file_put_contents($global, $json);
+        return $global;
+    }
+
+    public function testGlobalFileLoaded(): void
+    {
+        $global = $this->writeGlobal(json_encode(['mcpServers' => ['g' => ['command' => 'php']]]));
+        $loaded = McpConfig::load($this->workspace, $global);
+        self::assertSame([], $loaded['errors']);
+        self::assertSame('php', $loaded['servers']['g']->config['command']);
+    }
+
+    public function testProjectOverridesSameNameGlobal(): void
+    {
+        $global = $this->writeGlobal(json_encode(['mcpServers' => ['fs' => ['command' => 'old', 'args' => ['a']]]]));
+        $this->write(json_encode(['mcpServers' => ['fs' => ['command' => 'new']]]));
+        $spec = McpConfig::load($this->workspace, $global)['servers']['fs'];
+        self::assertSame('new', $spec->config['command'], '整条覆盖，不保留全局 args');
+        self::assertSame([], $spec->config['args']);
+    }
+
+    public function testGlobalAndProjectMerged(): void
+    {
+        $global = $this->writeGlobal(json_encode(['mcpServers' => ['g' => ['command' => 'php']]]));
+        $this->write(json_encode(['mcpServers' => ['p' => ['url' => 'https://a']]]));
+        $loaded = McpConfig::load($this->workspace, $global);
+        self::assertSame(['g', 'p'], array_keys($loaded['servers']));
+    }
+
+    public function testCorruptGlobalThrows(): void
+    {
+        $global = $this->writeGlobal('{ not json');
+        try {
+            McpConfig::load($this->workspace, $global);
+            self::fail('全局 JSON 损坏必须抛异常');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString($global, $e->getMessage(), '消息须标注来源文件');
+        }
+    }
+
+    public function testInvalidProjectEntryShadowsValidGlobal(): void
+    {
+        $global = $this->writeGlobal(json_encode(['mcpServers' => ['x' => ['command' => 'php']]]));
+        $this->write(json_encode(['mcpServers' => ['x' => ['command' => 'a', 'url' => 'https://b']]]));
+        $loaded = McpConfig::load($this->workspace, $global);
+        self::assertArrayHasKey('x', $loaded['errors'], '项目非法条目进 errors');
+        self::assertArrayNotHasKey('x', $loaded['servers'], '不回落到全局合法条目');
     }
 }
