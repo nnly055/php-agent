@@ -191,8 +191,17 @@ final class AgentServer
     {
         $body = json_decode((string) $request->getBody(), true);
         $message = trim((string) ($body['message'] ?? ''));
-        if ($message === '') {
-            return $this->json(400, ['error' => 'message 不能为空']);
+        // images 可选（[{media_type,data}]）：非数组（前端垃圾数据）一律按无图处理
+        $images = is_array($body['images'] ?? null) ? $body['images'] : [];
+        if ($message === '' && $images === []) {
+            return $this->json(400, ['error' => 'message 与 images 不能同时为空']);
+        }
+
+        // 图片在进 async 之前同步校验归一化（同 profile/model：校验失败立刻 400，SSE 已开流就无法改状态码）
+        try {
+            $images = AgentLoop::normalizeImages($images);
+        } catch (\InvalidArgumentException $e) {
+            return $this->json(400, ['error' => $e->getMessage()]);
         }
 
         // per-turn 模型切换：在进 async 之前同步解析（校验失败立刻 400，SSE 已开流就无法改状态码）
@@ -240,7 +249,7 @@ final class AgentServer
             $broker?->discardActive();
         });
 
-        \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker, $selection): void {
+        \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker, $selection, $images): void {
             try {
                 $onEvent = function (StreamEvent $e) use ($stream): void {
                     $stream->write($this->sseFrame($e));
@@ -249,7 +258,7 @@ final class AgentServer
                 if ($broker !== null) {
                     $broker->setEmitter($onEvent);
                 }
-                $final = $this->loop->run($messages, $message, $onEvent);
+                $final = $this->loop->run($messages, $message, $onEvent, $images);
                 $this->store->save($sid, $messages, $selection);
                 HookPipeline::fire($this->hooks, 'session_saved', ['sessionId' => $sid]);
                 $stream->write($this->sseFrame(StreamEvent::finalAnswer($final)));

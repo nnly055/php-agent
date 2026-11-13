@@ -339,4 +339,32 @@ final class ServerApiTest extends TestCase
         $load = json_decode((string) $s->handle(new ServerRequest('GET', 'http://localhost/sessions/m1'))->getBody(), true);
         self::assertSame('p', $load['meta']['profileId'] ?? null);
     }
+
+    public function testAgentRejectsInvalidImages(): void
+    {
+        $s = $this->server();
+        // 类型不在白名单
+        $r1 = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => 'hi', 'images' => [['media_type' => 'image/svg+xml', 'data' => 'AAAA']],
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(400, $r1->getStatusCode());
+        // 非法 base64
+        $r2 = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => 'hi', 'images' => [['media_type' => 'image/png', 'data' => '!!']],
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(400, $r2->getStatusCode());
+    }
+
+    public function testAgentPureImageTurnStoresImageBlocks(): void
+    {
+        $store = new InMemorySessionStore();
+        $s = $this->server($store);
+        $resp = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => '', 'session_id' => 'img', 'images' => [['media_type' => 'image/png', 'data' => base64_encode('abc')]],
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $resp->getStatusCode());
+        Loop::run(); // 泵协程让回合跑完并落盘
+        $messages = $store->load('img');
+        self::assertSame('image', $messages[0]['content'][0]['type']);
+    }
 }
