@@ -17,6 +17,9 @@
     McpPlugin 无需改动
   - Tauri 新增 `get_mcp` / `save_mcp_global` / `save_mcp_project` 命令（写入前校验：
     名称非空唯一、command/url 二选一、timeout ≥ 1）；保存后重启项目生效
+  - 加固：mcp.json 原子写（临时文件 + rename，0600 权限）；`get_mcp` 分层返回错误
+    （单层损坏不拖垮另一层，UI 对损坏层禁保存并显示重试）；workspace 校验
+    （仅已登记项目/运行中会话可读写其 .mcp.json）；存在但不可读的配置文件报错而非当缺失
 
 ## [0.4.1] - 2026-11-12
 
