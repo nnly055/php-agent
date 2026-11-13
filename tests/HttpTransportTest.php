@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PhpAgent\Tests;
 
 use PhpAgent\Config;
+use PhpAgent\LLM\AnthropicClient;
 use PhpAgent\LLM\OpenAICompatClient;
 use PhpAgent\Mcp\HttpTransport;
 use PHPUnit\Framework\TestCase;
@@ -12,12 +13,13 @@ use PHPUnit\Framework\TestCase;
 /**
  * HttpTransport：php -S 起本地 Streamable HTTP 夹具，
  * 覆盖 JSON 响应、SSE 响应、Mcp-Session-Id 回传、202 通知、非 2xx 报错。
- * 另沿用同一模式起 OpenAI 兼容夹具，断言 OpenAICompatClient 发出的请求体。
+ * 另沿用同一模式起 OpenAI / Anthropic 兼容夹具，断言各客户端发出的请求体。
  */
 final class HttpTransportTest extends TestCase
 {
     private const FIXTURE = __DIR__ . '/fixtures/mcp/fake-http-server.php';
     private const LLM_FIXTURE = __DIR__ . '/fixtures/llm/fake-openai-server.php';
+    private const ANTHROPIC_FIXTURE = __DIR__ . '/fixtures/llm/fake-anthropic-server.php';
 
     /** @var resource|null */
     private $server = null;
@@ -178,5 +180,37 @@ final class HttpTransportTest extends TestCase
         self::assertArrayNotHasKey('max_tokens', $body);
         self::assertSame('test-model', $body['model']); // 其余字段照常
         self::assertTrue($body['stream']);
+    }
+
+    // ── AnthropicClient：请求体断言（同一 php -S 模式） ─────────────────────
+
+    /** 起 Anthropic 夹具并返回指向它的客户端；夹具把请求体写入 $capture 文件 */
+    private function anthropicClient(string $capture): AnthropicClient
+    {
+        $port = $this->startServer(self::ANTHROPIC_FIXTURE, ['LLM_CAPTURE_FILE' => $capture]);
+        $env = [
+            'AGENT_PROVIDER' => 'anthropic',
+            'AGENT_API_KEY' => 'sk-test',
+            'AGENT_MODEL' => 'test-model',
+            'AGENT_BASE_URL' => "http://127.0.0.1:{$port}",
+        ];
+        return new AnthropicClient(Config::fromArray($env));
+    }
+
+    public function testAnthropicBodyMapsImageBlock(): void
+    {
+        $capture = (string) tempnam(sys_get_temp_dir(), 'php-agent-body-');
+        $client = $this->anthropicClient($capture);
+        $messages = [['role' => 'user', 'content' => [
+            ['type' => 'image', 'media_type' => 'image/png', 'data' => base64_encode('abc')],
+            ['type' => 'text', 'text' => '这是什么'],
+        ]]];
+        foreach ($client->stream($messages, [], 'sys') as $event) { }
+        $body = json_decode((string) file_get_contents($capture), true);
+        unlink($capture);
+        $block = $body['messages'][0]['content'][0];
+        self::assertSame('image', $block['type']);
+        self::assertSame(['type' => 'base64', 'media_type' => 'image/png', 'data' => base64_encode('abc')], $block['source']);
+        self::assertSame('text', $body['messages'][0]['content'][1]['type']);
     }
 }

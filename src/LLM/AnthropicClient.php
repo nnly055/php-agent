@@ -119,6 +119,9 @@ final class AnthropicClient extends BaseSseClient
                         }
                         $blocks[] = ['type' => 'text', 'text' => $block['text']];
                         break;
+                    case 'image':
+                        $blocks[] = ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => (string) $block['media_type'], 'data' => (string) $block['data']]];
+                        break;
                     case 'tool_use':
                         $blocks[] = [
                             'type' => 'tool_use',
