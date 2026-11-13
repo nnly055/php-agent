@@ -16,23 +16,41 @@ use PhpAgent\LLM\StreamEvent;
  */
 final class AgentLoop
 {
+    /** 允许的图片 MIME 白名单（比较前统一 lower） */
+    private const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+    /** 每轮用户消息最多携带的图片张数 */
+    private const MAX_IMAGES_PER_TURN = 5;
+
+    /** 单张图片解码后的最大字节数（5MB） */
+    private const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
     /** @var \Closure(StreamEvent): void|null */
     private ?\Closure $onEvent;
 
     /**
      * @param array $messages 归一化会话历史（引用传递，原地追加）
      * @param \Closure(StreamEvent): void|null $onEvent 每个流式/工具事件都会回调（UI 用）
+     * @param array $images 用户本轮附带的图片：['media_type'=>string,'data'=>base64 string] 列表；
+     *                      经 normalizeImages 校验归一化后置于文本块之前（图前文后）；
+     *                      有图无文本合法；无图无文本保持旧的 text '' 块（CLI 兼容）
      * @return string 最终文本回答
      */
     public function run(
         array &$messages,
         string $userInput,
         ?\Closure $onEvent = null,
+        array $images = [],
     ): string {
         $emit = $onEvent ?? static fn (StreamEvent $e) => null;
         $this->onEvent = $emit;
 
-        $messages[] = ['role' => 'user', 'content' => [['type' => 'text', 'text' => $userInput]]];
+        // 用户消息组装：image 块在前、文本在后（图前文后）；校验失败先于消息落历史抛出
+        $content = self::normalizeImages($images);
+        if ($userInput !== '' || $content === []) {
+            $content[] = ['type' => 'text', 'text' => $userInput];
+        }
+        $messages[] = ['role' => 'user', 'content' => $content];
 
         for ($iteration = 1; $iteration <= $this->maxIterations; $iteration++) {
             // 钩子点：before_llm_request —— payload 以引用携带 messages（可做上下文裁剪/注入）
@@ -106,6 +124,74 @@ final class AgentLoop
         throw new LLMException(
             "已达到最大工具调用轮数（{$this->maxIterations}），任务中止。可在 .env 调整 AGENT_MAX_ITERATIONS。"
         );
+    }
+
+    /**
+     * 归一化/校验用户上传的图片：['media_type'=>string,'data'=>base64 string] 列表
+     * → ['type'=>'image','media_type'=>…,'data'=>…] 块列表。
+     *
+     * 校验（失败抛 InvalidArgumentException，消息含具体原因）：
+     * - 总数 ≤ 5 张；
+     * - media_type 必须在白名单内（比较前统一 lower，大小写不敏感）；
+     * - data 必须是合法 base64，解码后 ≤ 5MB。
+     *
+     * 幂等：输入已是块形态（含 type=image）时同样通过并输出归一化块。
+     *
+     * @param array $images 原始图片列表或已归一化的块列表
+     * @return array<int, array{type: string, media_type: string, data: string}>
+     */
+    public static function normalizeImages(array $images): array
+    {
+        $count = count($images);
+        if ($count > self::MAX_IMAGES_PER_TURN) {
+            throw new \InvalidArgumentException(
+                '图片数量超过上限：最多 ' . self::MAX_IMAGES_PER_TURN . " 张，收到 {$count} 张"
+            );
+        }
+
+        $blocks = [];
+        $pos = 0;
+        foreach ($images as $img) {
+            $pos++;
+            $label = "第 {$pos} 张图片";
+            if (!is_array($img)) {
+                throw new \InvalidArgumentException("{$label}格式错误：必须是数组");
+            }
+
+            // 已是块形态时 type 必须为 image（原始形态没有 type，直接走后续校验）
+            if (isset($img['type']) && $img['type'] !== 'image') {
+                throw new \InvalidArgumentException("{$label}的 type 必须为 image，收到 {$img['type']}");
+            }
+
+            $mediaType = $img['media_type'] ?? null;
+            if (!is_string($mediaType) || $mediaType === '') {
+                throw new \InvalidArgumentException("{$label}缺少 media_type");
+            }
+            $mediaType = strtolower($mediaType);
+            if (!in_array($mediaType, self::IMAGE_MEDIA_TYPES, true)) {
+                throw new \InvalidArgumentException(
+                    "{$label}类型不在白名单：{$mediaType}（仅允许 " . implode('、', self::IMAGE_MEDIA_TYPES) . '）'
+                );
+            }
+
+            $data = $img['data'] ?? null;
+            if (!is_string($data) || $data === '') {
+                throw new \InvalidArgumentException("{$label}缺少 data（base64 内容）");
+            }
+            $decoded = base64_decode($data, true); // 严格模式：含非法字符直接 false
+            if ($decoded === false) {
+                throw new \InvalidArgumentException("{$label}的 data 不是合法的 base64 编码");
+            }
+            if (strlen($decoded) > self::MAX_IMAGE_BYTES) {
+                throw new \InvalidArgumentException(
+                    "{$label}解码后 " . strlen($decoded) . ' 字节，超过 5MB 上限'
+                );
+            }
+
+            $blocks[] = ['type' => 'image', 'media_type' => $mediaType, 'data' => $data];
+        }
+
+        return $blocks;
     }
 
     /**

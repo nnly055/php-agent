@@ -154,4 +154,85 @@ final class AgentLoopTest extends TestCase
         self::assertCount(1, $notices);
         self::assertSame('测试通知', $notices[0]->data['text']);
     }
+
+    public function testRunBuildsImageBlocksBeforeText(): void
+    {
+        $loop = new AgentLoop(new FakeLLMClient([[StreamEvent::text('ok'), StreamEvent::end('end_turn')]]), new ToolRegistry(), 'sys', 5);
+        $messages = [];
+        $final = $loop->run($messages, '这是什么', null, [['media_type' => 'image/png', 'data' => base64_encode('abc')]]);
+        self::assertSame('ok', $final);
+        $content = $messages[0]['content'];
+        self::assertSame('image', $content[0]['type']);
+        self::assertSame('image/png', $content[0]['media_type']);
+        self::assertSame(base64_encode('abc'), $content[0]['data']);
+        self::assertSame(['type' => 'text', 'text' => '这是什么'], $content[1]);
+    }
+
+    public function testRunPureImageAllowsEmptyText(): void
+    {
+        // 有图 + 空文本 → 只含 image 块
+        $messages = [];
+        (new AgentLoop(new FakeLLMClient([[StreamEvent::text('ok'), StreamEvent::end('end_turn')]]), new ToolRegistry(), 'sys', 5))
+            ->run($messages, '', null, [['media_type' => 'image/jpeg', 'data' => 'AAAA']]);
+        self::assertCount(1, $messages[0]['content']);
+        self::assertSame('image', $messages[0]['content'][0]['type']);
+    }
+
+    public function testRunRejectsInvalidImages(): void
+    {
+        $loop = new AgentLoop(new FakeLLMClient([]), new ToolRegistry(), 'sys', 5);
+        $messages = [];
+        $this->expectException(\InvalidArgumentException::class);
+        $loop->run($messages, 'hi', null, [['media_type' => 'image/svg+xml', 'data' => 'AAAA']]); // 类型不在白名单
+    }
+
+    public function testNormalizeImagesRejectsMoreThanFive(): void
+    {
+        $images = array_fill(0, 6, ['media_type' => 'image/png', 'data' => base64_encode('x')]);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('最多 5 张');
+        AgentLoop::normalizeImages($images);
+    }
+
+    public function testNormalizeImagesRejectsOversizeImage(): void
+    {
+        // 解码后超过 5MB → 抛异常
+        $images = [['media_type' => 'image/png', 'data' => base64_encode(str_repeat('A', 5 * 1024 * 1024 + 1))]];
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('5MB');
+        AgentLoop::normalizeImages($images);
+    }
+
+    public function testNormalizeImagesRejectsNonBase64(): void
+    {
+        $images = [['media_type' => 'image/png', 'data' => '!!']];
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('base64');
+        AgentLoop::normalizeImages($images);
+    }
+
+    public function testNormalizeImagesIdempotentForBlockForm(): void
+    {
+        // 输入已是块形态 → 幂等：原样归一化输出，且对输出再归一化结果不变
+        $block = ['type' => 'image', 'media_type' => 'image/png', 'data' => base64_encode('abc')];
+        $out = AgentLoop::normalizeImages([$block]);
+        self::assertSame([$block], $out);
+        self::assertSame($out, AgentLoop::normalizeImages($out));
+    }
+
+    public function testNormalizeImagesLowersMediaType(): void
+    {
+        // media_type 比较前统一 lower，输出归一化为小写
+        $out = AgentLoop::normalizeImages([['media_type' => 'IMAGE/PNG', 'data' => base64_encode('abc')]]);
+        self::assertSame('image/png', $out[0]['media_type']);
+    }
+
+    public function testNormalizeImagesAllowsExactly5MB(): void
+    {
+        // 边界：解码后恰好 5MB → 允许
+        $data = base64_encode(str_repeat('A', 5 * 1024 * 1024));
+        $out = AgentLoop::normalizeImages([['media_type' => 'image/webp', 'data' => $data]]);
+        self::assertCount(1, $out);
+        self::assertSame('image/webp', $out[0]['media_type']);
+    }
 }
