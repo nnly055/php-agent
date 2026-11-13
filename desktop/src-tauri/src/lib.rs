@@ -571,11 +571,14 @@ fn validate_mcp(entries: &[McpServerEntry]) -> Result<(), String> {
     Ok(())
 }
 
-/// 读一个 mcp.json：缺失 = 静默空；损坏 = Err（消息含路径）；条目非法 = Err（消息含 server 名）
+/// 读一个 mcp.json：缺失 = 静默空；损坏/不可读 = Err（消息含路径）；条目非法 = Err（消息含 server 名）
 fn parse_mcp_file(path: &std::path::Path) -> Result<Vec<McpServerEntry>, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
-        Err(_) => return Ok(vec![]), // 缺失静默（含不可读），与 PHP「文件缺失 = no-op」对齐
+        // 仅缺失静默（与 PHP「文件缺失 = no-op」对齐）；存在但不可读必须报错，
+        // 否则 UI 显示空层、保存会静默覆盖真实配置
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(format!("MCP 配置 {} 不可读: {e}", path.display())),
     };
     let v: serde_json::Value = serde_json::from_str(&text)
         .map_err(|_| format!("MCP 配置 {} 不是合法 JSON", path.display()))?;
@@ -927,6 +930,25 @@ mod tests {
         assert_eq!(parse_mcp_file(&path).unwrap(), vec![], "缺失静默空");
         std::fs::write(&path, "{ nope").unwrap();
         assert!(parse_mcp_file(&path).is_err(), "损坏报错");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn parse_mcp_file_unreadable_is_error() {
+        // Review 重要项：存在但不可读 ≠ 缺失，必须报错（否则保存会静默覆盖真实配置）
+        let dir = std::env::temp_dir().join(format!("php-agent-mcp-rs-perm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{}}"#).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let r = parse_mcp_file(&path);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(r.is_err(), "存在但不可读 = Err（不能静默当作缺失）");
+        }
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
     }

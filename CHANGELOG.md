@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **MCP 配置管理（桌面设置入口）**
+  - 设置对话框新增「MCP」Tab：可视化管理全局（`~/.php-agent/mcp.json`，新文件）与
+    项目（`<workspace>/.mcp.json`）两层 MCP server（stdio：command/args/env；
+    http：url/headers；timeout），项目同名条目整条覆盖全局
+  - `McpConfig::load()` 支持全局层（`globalPath()`，文件缺失静默、损坏抛异常并标注来源）；
+    McpPlugin 无需改动
+  - Tauri 新增 `get_mcp` / `save_mcp_global` / `save_mcp_project` 命令（写入前校验：
+    名称非空唯一、command/url 二选一、timeout ≥ 1）；保存后重启项目生效
+
 ## [0.4.1] - 2026-11-12
 
 ### 修复
