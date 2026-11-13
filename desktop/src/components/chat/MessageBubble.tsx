@@ -12,6 +12,8 @@ export function MessageBubble({ msg, streaming }: { msg: ChatMessage; streaming?
   if (msg.role === "user") {
     return (
       <div className="animate-fade-up max-w-[80%] self-end whitespace-pre-wrap rounded-2xl rounded-br-sm border border-primary/30 bg-primary/15 px-4 py-2.5 text-sm text-ink">
+        {/* 随附图片渲染为缩略图网格（无图时保持原样） */}
+        {msg.images?.length ? <div className="mb-1.5 flex flex-wrap gap-1.5">{msg.images.map((im, i) => <img key={i} src={`data:${im.mediaType};base64,${im.data}`} alt="用户发送的图片" className="max-h-40 rounded-lg border border-border" />)}</div> : null}
         {msg.text}
       </div>
     );

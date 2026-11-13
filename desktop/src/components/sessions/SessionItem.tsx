@@ -25,7 +25,9 @@ function toChatMessages(messages: any[]): ChatMessage[] {
     if (!m || !Array.isArray(m.content)) continue;
     if (m.role === "user") {
       const text = m.content.filter((b: any) => b && b.type === "text").map((b: any) => b.text ?? "").join("");
-      if (text) out.push({ id: `h${out.length}`, role: "user", text, tools: [] });
+      // 提取归一化 image 块（media_type/data），纯图消息也要保留
+      const images = m.content.filter((b: any) => b?.type === "image").map((b: any) => ({ mediaType: b.media_type, data: b.data }));
+      if (text || images.length) out.push({ id: `h${out.length}`, role: "user", text, tools: [], ...(images.length ? { images } : {}) });
     } else if (m.role === "assistant") {
       const text = m.content.filter((b: any) => b && b.type === "text").map((b: any) => b.text ?? "").join("");
       const tools: ToolCard[] = m.content.filter((b: any) => b && b.type === "tool_use").map((b: any) => ({ id: b.id, name: b.name, input: b.input, status: "ok" }));

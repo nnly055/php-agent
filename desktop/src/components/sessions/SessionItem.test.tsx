@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SessionItem } from "./SessionItem";
+import { MessageBubble } from "../chat/MessageBubble";
 import { useAppStore } from "../../store/useAppStore";
 import { loadSession, deleteSession, listSessions } from "../../lib/api";
 
@@ -9,6 +10,12 @@ vi.mock("../../lib/api", () => ({
   deleteSession: vi.fn(),
   listSessions: vi.fn(),
 }));
+
+// 最小聊天视图：把 store 中的 messages 渲染成气泡，供回放断言使用
+function ReplayView() {
+  const messages = useAppStore((s) => s.messages);
+  return <>{messages.map((m) => <MessageBubble key={m.id} msg={m} />)}</>;
+}
 
 const meta = { id: "s1", title: "测试会话", createdAt: 0, updatedAt: 0, messageCount: 2 };
 
@@ -83,5 +90,26 @@ describe("SessionItem", () => {
     expect(msgs[2].text).toBe("");
     expect(msgs[2].tools).toHaveLength(1);
     expect(msgs.every((m) => m.text || m.tools.length)).toBe(true);
+  });
+
+  it("历史回放渲染用户消息里的图片", async () => {
+    // mock loadSession 返回含 image 块的用户消息
+    vi.mocked(loadSession).mockResolvedValue({
+      id: "s1",
+      messages: [
+        { role: "user", content: [{ type: "image", media_type: "image/png", data: "AAAA" }] },
+      ] as any[],
+    });
+    render(
+      <>
+        <SessionItem meta={meta} />
+        <ReplayView />
+      </>
+    );
+    fireEvent.click(screen.getByRole("button", { name: /测试会话/ }));
+    await waitFor(() => expect(useAppStore.getState().activeSession).toBe("s1"));
+    // 打开会话后断言出现 <img src="data:image/png;base64,AAAA">
+    const img = await screen.findByAltText("用户发送的图片");
+    expect(img).toHaveAttribute("src", "data:image/png;base64,AAAA");
   });
 });
