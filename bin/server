@@ -22,6 +22,10 @@ use PhpAgent\Server\ConfirmBroker;
 use PhpAgent\Server\ProfileRegistry;
 use React\EventLoop\Loop;
 use React\Http\HttpServer;
+use React\Http\Message\Response;
+use React\Http\Middleware\RequestBodyBufferMiddleware;
+use React\Http\Middleware\RequestBodyParserMiddleware;
+use React\Http\Middleware\StreamingRequestMiddleware;
 use React\Socket\SocketServer;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -66,7 +70,27 @@ $loop = new AgentLoop(
 $storeClass = get_class($kernel->sessionStore());
 $server = new AgentServer($loop, $kernel->sessionStore(), $hooks, $root . '/public', $config, $registry, $broker);
 
-$http = new HttpServer(Loop::get(), $server->handle(...));
+// 显式中间件栈把请求体上限从默认 64KiB 提到 40MB（图片 base64 内联）。
+// StreamingRequestMiddleware 用于关闭 HttpServer 自动注入的 64KiB 缓冲中间件（默认上限先生效，显式 40MB 形同虚设）。
+// react/http 对超限 body 的行为是静默清空而非 413，故缓冲之后补一道检查：Content-Length 超上限而 body 为空 → 413。
+$bodyLimit = 40 * 1024 * 1024;
+$http = new HttpServer(
+    Loop::get(),
+    new StreamingRequestMiddleware(),
+    new RequestBodyBufferMiddleware($bodyLimit),
+    static function (\Psr\Http\Message\ServerRequestInterface $request, callable $next) use ($bodyLimit) {
+        if ((int) $request->getHeaderLine('Content-Length') > $bodyLimit && $request->getBody()->getSize() === 0) {
+            return new Response(
+                413,
+                ['Content-Type' => 'application/json; charset=utf-8'],
+                json_encode(['error' => '请求体超过 40MB 上限'], JSON_UNESCAPED_UNICODE)
+            );
+        }
+        return $next($request);
+    },
+    new RequestBodyParserMiddleware(),
+    $server->handle(...),
+);
 $port = $config->serverPort();
 $socket = new SocketServer('127.0.0.1:' . $port, [], Loop::get());
 $http->listen($socket);
