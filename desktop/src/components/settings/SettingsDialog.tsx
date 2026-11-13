@@ -9,8 +9,18 @@ import {
 } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { Plus, Trash2 } from "lucide-react";
-import { getProfiles, saveProfiles, type Profile, type ProfilesPayload } from "../../lib/tauri";
+import {
+  getMcp,
+  getProfiles,
+  saveMcpGlobal,
+  saveMcpProject,
+  saveProfiles,
+  type McpServer,
+  type Profile,
+  type ProfilesPayload,
+} from "../../lib/tauri";
 import { pushProfiles, testConfig } from "../../lib/api";
 import { useUiStore } from "../../store/useUiStore";
 
@@ -34,7 +44,54 @@ const clonePayload = (p: ProfilesPayload): ProfilesPayload => ({
   defaultModel: "",
 });
 
-export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
+// ── MCP 配置（全局 + 项目两层） ─────────────────────────────
+
+/** 编辑态条目：文件字段摊平成单行/多行文本，保存时再解析（textarea 受控值必须是文本，避免逐键重解析丢字） */
+type McpDraftServer = {
+  name: string;
+  kind: "stdio" | "http";
+  command: string;
+  argsText: string;
+  envText: string;
+  url: string;
+  headersText: string;
+  timeoutText: string;
+};
+
+type McpDraft = { global: McpDraftServer[]; project: McpDraftServer[] | null };
+
+/** 文件条目 → 编辑态：kind 取 command 非空为 stdio（文件里可能有 command/url 皆有的非法条目，回填显示不崩，保存时校验拦截） */
+const toMcpDraft = (e: McpServer): McpDraftServer => ({
+  name: e.name,
+  kind: e.command ? "stdio" : "http",
+  command: e.command,
+  argsText: e.args.join("\n"),
+  envText: Object.entries(e.env).map(([k, v]) => `${k}=${v}`).join("\n"),
+  url: e.url,
+  headersText: Object.entries(e.headers).map(([k, v]) => `${k}: ${v}`).join("\n"),
+  timeoutText: e.timeout != null ? String(e.timeout) : "",
+});
+
+/** env/headers 多行文本 → record：空行忽略，无分隔符（或 key 为空）的行丢弃，key/value 去首尾空白（value 可为空串） */
+const parsePairs = (text: string, sep: string): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    const i = t.indexOf(sep);
+    if (i <= 0) continue;
+    out[t.slice(0, i).trim()] = t.slice(i + sep.length).trim();
+  }
+  return out;
+};
+
+export function SettingsDialog({
+  testUrl,
+  activeWorkspace,
+}: {
+  testUrl: string | null;
+  activeWorkspace?: string | null;
+}) {
   const open = useUiStore((s) => s.settingsOpen);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   // null = 目录未加载或为空 → 显示空态引导
@@ -42,11 +99,19 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [tab, setTab] = useState<"profiles" | "mcp">("profiles");
+  // null = 未加载；mcpLoaded 防同一次打开内切 tab 重复拉取
+  const [mcpDraft, setMcpDraft] = useState<McpDraft | null>(null);
+  const [mcpLoaded, setMcpLoaded] = useState(false);
 
-  // 打开时回填：优先 useUiStore 目录缓存（App 启动已拉取）；无缓存时 getProfiles 兜底
+  // 打开时回填：优先 useUiStore 目录缓存（App 启动已拉取）；无缓存时 getProfiles 兜底。
+  // 重置 tab 与 MCP 草稿：每次打开都从磁盘重读（.mcp.json 可能被外部编辑过）
   useEffect(() => {
     if (!open) return;
     setResult(null);
+    setTab("profiles");
+    setMcpDraft(null);
+    setMcpLoaded(false);
     const cached = useUiStore.getState().profilesPayload;
     if (cached) {
       setDraft(clonePayload(cached));
@@ -56,6 +121,23 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
         .catch(() => {});
     }
   }, [open]);
+
+  // 首次切到 MCP tab 时拉取两层配置
+  useEffect(() => {
+    if (!open || tab !== "mcp" || mcpLoaded) return;
+    getMcp(activeWorkspace ?? null)
+      .then((p) => {
+        setMcpDraft({
+          global: p.global.map(toMcpDraft),
+          project: p.project ? p.project.map(toMcpDraft) : null,
+        });
+        setMcpLoaded(true);
+      })
+      .catch((e: any) => {
+        setMcpLoaded(true);
+        setResult({ ok: false, message: (typeof e === "string" ? e : e?.message) ?? "MCP 配置读取失败" });
+      });
+  }, [open, tab, mcpLoaded, activeWorkspace]);
 
   function updateProfile(idx: number, patch: Partial<Profile>) {
     setDraft((d) =>
@@ -161,17 +243,258 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
     }
   }
 
+  // ── MCP 编辑 ──
+
+  function updateMcp(section: "global" | "project", idx: number, patch: Partial<McpDraftServer>) {
+    setMcpDraft((d) => {
+      if (!d) return d;
+      if (section === "project") {
+        if (!d.project) return d;
+        return { ...d, project: d.project.map((s, i) => (i === idx ? { ...s, ...patch } : s)) };
+      }
+      return { ...d, global: d.global.map((s, i) => (i === idx ? { ...s, ...patch } : s)) };
+    });
+  }
+
+  function addMcpServer(section: "global" | "project") {
+    const entry: McpDraftServer = {
+      name: "", kind: "stdio", command: "", argsText: "", envText: "", url: "", headersText: "", timeoutText: "",
+    };
+    setMcpDraft((d) => {
+      if (!d) return d;
+      if (section === "project") {
+        return d.project ? { ...d, project: [...d.project, entry] } : d;
+      }
+      return { ...d, global: [...d.global, entry] };
+    });
+  }
+
+  function removeMcpServer(section: "global" | "project", idx: number) {
+    setMcpDraft((d) => {
+      if (!d) return d;
+      if (section === "project") {
+        return d.project ? { ...d, project: d.project.filter((_, i) => i !== idx) } : d;
+      }
+      return { ...d, global: d.global.filter((_, i) => i !== idx) };
+    });
+  }
+
+  /** 编辑态 → 文件条目；非法返回中文错误消息（校验与 PHP/Rust 语义对齐：名称唯一、command/url 二选一、timeout ≥ 1） */
+  function parseMcpSection(list: McpDraftServer[]): McpServer[] | string {
+    const seen = new Set<string>();
+    for (const s of list) {
+      const name = s.name.trim();
+      if (!name) return "MCP server 名称不能为空";
+      if (seen.has(name)) return `MCP server 名称重复: ${name}`;
+      seen.add(name);
+      const hasCommand = !!s.command.trim();
+      const hasUrl = !!s.url.trim();
+      if (hasCommand === hasUrl) return `MCP server '${name}'：command 与 url 必须二选一`;
+      if (s.timeoutText.trim() !== "") {
+        const n = Number(s.timeoutText);
+        if (!Number.isFinite(n) || n < 1) return `MCP server '${name}'：timeout 须为 ≥ 1 的秒数`;
+      }
+    }
+    return list.map((s) => {
+      const isStdio = s.kind === "stdio";
+      return {
+        name: s.name.trim(),
+        command: isStdio ? s.command.trim() : "",
+        args: isStdio ? s.argsText.split("\n").map((x) => x.trim()).filter(Boolean) : [],
+        env: isStdio ? parsePairs(s.envText, "=") : {},
+        url: !isStdio ? s.url.trim() : "",
+        headers: !isStdio ? parsePairs(s.headersText, ":") : {},
+        timeout: s.timeoutText.trim() === "" ? null : Number(s.timeoutText),
+      };
+    });
+  }
+
+  async function saveMcp() {
+    if (!mcpDraft) return;
+    const g = parseMcpSection(mcpDraft.global);
+    if (typeof g === "string") {
+      setResult({ ok: false, message: g });
+      return;
+    }
+    // 有打开项目才解析/保存项目层（project 为 null = 项目区不可编辑）
+    const p = mcpDraft.project ? parseMcpSection(mcpDraft.project) : null;
+    if (typeof p === "string") {
+      setResult({ ok: false, message: p });
+      return;
+    }
+    setSaving(true);
+    setResult(null);
+    try {
+      await saveMcpGlobal(g);
+      if (mcpDraft.project) {
+        await saveMcpProject(activeWorkspace!, p!);
+      }
+      setResult({ ok: true, message: "已保存；运行中的项目重启后生效" });
+    } catch (e: any) {
+      setResult({ ok: false, message: (typeof e === "string" ? e : e?.message) ?? "保存失败" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const canTest = !!testUrl && !!draft && draft.profiles.length > 0 && !testing && !saving;
+
+  /** 一层 server 卡片列表（全局区与项目区共用） */
+  function renderMcpCards(list: McpDraftServer[] | null, section: "global" | "project") {
+    if (!list || list.length === 0) {
+      return <p className="text-xs text-muted">尚无 server，点击下方「添加 server」。</p>;
+    }
+    return (
+      <>
+        {list.map((s, i) => (
+          <div key={`${section}-${i}`} className="space-y-2 rounded-md border border-border p-3">
+            <div className="flex gap-2">
+              <label className="block flex-1 space-y-1">
+                <span className="text-sm text-muted">名称</span>
+                <Input
+                  value={s.name}
+                  placeholder="server 名称（如 filesystem）"
+                  onChange={(e) => updateMcp(section, i, { name: e.target.value })}
+                />
+              </label>
+              <label className="block w-40 space-y-1">
+                <span className="text-sm text-muted">类型</span>
+                <select
+                  className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-ink"
+                  value={s.kind}
+                  onChange={(e) => {
+                    // 切换类型清空另一侧字段：kind 决定写入侧，避免隐藏侧残留数据触发「二选一」校验
+                    const kind = e.target.value === "http" ? "http" : "stdio";
+                    updateMcp(section, i,
+                      kind === "http"
+                        ? { kind, command: "", argsText: "", envText: "" }
+                        : { kind, url: "", headersText: "" },
+                    );
+                  }}
+                >
+                  <option value="stdio">stdio（本地命令）</option>
+                  <option value="http">http（远程 URL）</option>
+                </select>
+              </label>
+            </div>
+            {s.kind === "stdio" ? (
+              <>
+                <label className="block space-y-1">
+                  <span className="text-sm text-muted">命令</span>
+                  <Input
+                    value={s.command}
+                    placeholder="命令，如 npx"
+                    className="font-mono"
+                    onChange={(e) => updateMcp(section, i, { command: e.target.value })}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm text-muted">参数（每行一个）</span>
+                  <Textarea
+                    value={s.argsText}
+                    placeholder={"每行一个参数，如 -y server"}
+                    rows={2}
+                    className="font-mono"
+                    onChange={(e) => updateMcp(section, i, { argsText: e.target.value })}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm text-muted">环境变量（每行 KEY=VALUE）</span>
+                  <Textarea
+                    value={s.envText}
+                    placeholder={"KEY=VALUE"}
+                    rows={2}
+                    className="font-mono"
+                    onChange={(e) => updateMcp(section, i, { envText: e.target.value })}
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="block space-y-1">
+                  <span className="text-sm text-muted">URL</span>
+                  <Input
+                    value={s.url}
+                    placeholder="https://mcp.example.com/mcp"
+                    className="font-mono"
+                    onChange={(e) => updateMcp(section, i, { url: e.target.value })}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm text-muted">请求头（每行 KEY: VALUE）</span>
+                  <Textarea
+                    value={s.headersText}
+                    placeholder={"Authorization: Bearer x"}
+                    rows={2}
+                    className="font-mono"
+                    onChange={(e) => updateMcp(section, i, { headersText: e.target.value })}
+                  />
+                </label>
+              </>
+            )}
+            <div className="flex items-end gap-2">
+              <label className="block w-40 space-y-1">
+                <span className="text-sm text-muted">timeout（秒）</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={s.timeoutText}
+                  placeholder="30（默认）"
+                  onChange={(e) => updateMcp(section, i, { timeoutText: e.target.value })}
+                />
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => removeMcpServer(section, i)}
+              >
+                删除
+              </Button>
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  function addMcpButton(section: "global" | "project") {
+    return (
+      <Button variant="outline" size="sm" onClick={() => addMcpServer(section)}>
+        <Plus size={14} /> 添加 server
+      </Button>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>平台管理</DialogTitle>
-          <DialogDescription>全局平台目录，对所有项目生效；保存即热更新运行中的项目，无需重启。</DialogDescription>
+          <DialogTitle>{tab === "mcp" ? "MCP 配置" : "平台管理"}</DialogTitle>
+          <DialogDescription>
+            {tab === "mcp"
+              ? "全局 MCP 对所有项目生效，项目配置覆盖同名全局条目；保存后重启项目生效。"
+              : "全局平台目录，对所有项目生效；保存即热更新运行中的项目，无需重启。"}
+          </DialogDescription>
         </DialogHeader>
 
-        {!draft || draft.profiles.length === 0 ? (
+        <div className="flex gap-1 border-b border-border pb-2">
+          <Button
+            variant={tab === "profiles" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setTab("profiles")}
+          >
+            平台
+          </Button>
+          <Button
+            variant={tab === "mcp" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setTab("mcp")}
+          >
+            MCP
+          </Button>
+        </div>
+
+        {tab === "profiles" && (!draft || draft.profiles.length === 0 ? (
           <div className="space-y-3 py-6 text-center">
             <p className="text-sm text-muted">尚未配置任何平台，请先添加一个平台。</p>
             <Button size="sm" variant="outline" onClick={addPlatform}>
@@ -318,6 +641,31 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
               添加平台
             </Button>
           </div>
+        ))}
+
+        {tab === "mcp" && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm font-medium text-ink">全局 MCP</span>
+                <span className="text-xs text-muted">对所有项目生效</span>
+              </div>
+              {renderMcpCards(mcpDraft?.global ?? null, "global")}
+              {addMcpButton("global")}
+            </div>
+            {activeWorkspace ? (
+              <div className="space-y-2">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-medium text-ink">当前项目 MCP</span>
+                  <span className="text-xs text-muted">覆盖同名全局条目</span>
+                </div>
+                {renderMcpCards(mcpDraft?.project ?? null, "project")}
+                {addMcpButton("project")}
+              </div>
+            ) : (
+              <p className="text-sm text-muted">未打开项目，仅可编辑全局配置。</p>
+            )}
+          </div>
         )}
 
         {result && (
@@ -328,10 +676,16 @@ export function SettingsDialog({ testUrl }: { testUrl: string | null }) {
         )}
 
         <DialogFooter className="mt-2 gap-2">
-          <Button variant="outline" size="sm" disabled={!canTest} onClick={runTest}>
-            {testing ? "测试中…" : "测试连接"}
-          </Button>
-          <Button size="sm" disabled={testing || saving} onClick={save}>
+          {tab === "profiles" && (
+            <Button variant="outline" size="sm" disabled={!canTest} onClick={runTest}>
+              {testing ? "测试中…" : "测试连接"}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            disabled={saving}
+            onClick={() => (tab === "mcp" ? saveMcp() : save())}
+          >
             {saving ? "保存中…" : "保存"}
           </Button>
         </DialogFooter>

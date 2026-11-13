@@ -209,6 +209,7 @@ export default function App() {
       </div>
       <SettingsDialog
         testUrl={activeTab?.store.getState().connected ? activeTab.store.getState().backendUrl : null}
+        activeWorkspace={activeTab?.path ?? null}
       />
     </div>
   );

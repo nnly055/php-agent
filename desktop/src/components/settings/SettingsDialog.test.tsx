@@ -14,6 +14,16 @@ vi.mock("../../lib/tauri", () => ({
   saveProfiles: vi.fn().mockResolvedValue(undefined),
   // 仅为断言「保存不重启」而 mock：对话框流程不得触碰 restartSession
   restartSession: vi.fn(),
+  // MCP Tab：全局含合法 fs 与非法 both（command/url 皆有，须能回填显示不崩），项目含 http 条目
+  getMcp: vi.fn().mockResolvedValue({
+    global: [
+      { name: "fs", command: "npx", args: ["-y"], env: { K: "v" }, url: "", headers: {}, timeout: 5 },
+      { name: "both", command: "x", args: [], env: {}, url: "https://a", headers: {}, timeout: null },
+    ],
+    project: [{ name: "remote", command: "", args: [], env: {}, url: "https://mcp.example.com", headers: { Authorization: "Bearer x" }, timeout: null }],
+  }),
+  saveMcpGlobal: vi.fn().mockResolvedValue(undefined),
+  saveMcpProject: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../lib/api", () => ({ testConfig: vi.fn(), pushProfiles: vi.fn().mockResolvedValue({ ok: true }) }));
 
@@ -222,5 +232,101 @@ describe("SettingsDialog 平台管理", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
     await waitFor(() => expect(screen.getAllByPlaceholderText(/平台名称/).length).toBe(1));
     expect(screen.getByRole("button", { name: "删除" })).toBeDisabled();
+  });
+});
+
+describe("SettingsDialog MCP 配置", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useUiStore.getState().setSettingsOpen(false);
+    useUiStore.getState().setProfilesPayload(null);
+    useAppStore.getState().reset();
+  });
+
+  it("Tab 切换显示 MCP 配置并回填全局/项目条目", async () => {
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} activeWorkspace="/tmp/ws" />);
+    fireEvent.click(screen.getByText("MCP"));
+    // 名称输入按 DOM 序：全局 fs、both，项目 remote
+    await waitFor(() => expect(screen.getAllByPlaceholderText(/server 名称/)).toHaveLength(3));
+    const names = screen.getAllByPlaceholderText(/server 名称/).map((el) => (el as HTMLInputElement).value);
+    expect(names).toEqual(["fs", "both", "remote"]);
+    expect(tauri.getMcp).toHaveBeenCalledWith("/tmp/ws");
+    // fs 卡片：args/env/timeout 回填
+    expect(screen.getAllByPlaceholderText(/每行一个参数/)[0]).toHaveDisplayValue("-y");
+    expect(screen.getAllByPlaceholderText(/KEY=VALUE/)[0]).toHaveDisplayValue("K=v");
+    expect(screen.getAllByPlaceholderText(/30（默认）/)[0]).toHaveDisplayValue("5");
+    // both（文件里的非法条目）：command 与 url 同时回填显示，kind 取 stdio（command 非空）
+    expect(screen.getAllByPlaceholderText(/命令，如/)[1]).toHaveDisplayValue("x");
+    expect(screen.queryByDisplayValue("https://a")).not.toBeInTheDocument();
+    // remote 卡片：headers 回填；timeout null 显示空
+    expect(screen.getAllByPlaceholderText(/Authorization: Bearer/)[0]).toHaveDisplayValue("Authorization: Bearer x");
+    expect(screen.getAllByPlaceholderText(/30（默认）/)[1]).toHaveDisplayValue("");
+  });
+
+  it("MCP 保存：解析文本字段并调用 saveMcpGlobal + saveMcpProject", async () => {
+    // 保存用合法条目（both 会被校验拦截），覆盖默认 mock
+    (tauri.getMcp as any).mockResolvedValue({
+      global: [{ name: "fs", command: "npx", args: ["-y"], env: { K: "v" }, url: "", headers: {}, timeout: 5 }],
+      project: [{ name: "remote", command: "", args: [], env: {}, url: "https://mcp.example.com", headers: { Authorization: "Bearer x" }, timeout: null }],
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} activeWorkspace="/tmp/ws" />);
+    fireEvent.click(screen.getByText("MCP"));
+    await waitFor(() => expect(screen.getAllByPlaceholderText(/server 名称/)).toHaveLength(2));
+    // 全局区新增条目：名称 g2、类型 http、url、headers（badline 无分隔符丢弃；B= 空值保留）
+    // 新卡插在 fs 之后：DOM 序 name 输入 = fs、新卡、remote → 新卡是下标 1
+    fireEvent.click(screen.getAllByText("添加 server")[0]);
+    expect(screen.getAllByPlaceholderText(/server 名称/)).toHaveLength(3);
+    fireEvent.change(screen.getAllByPlaceholderText(/server 名称/)[1], { target: { value: "g2" } });
+    // kind select：MCP tab 内 combobox 按 DOM 序 = 全局 fs、全局新卡、项目 remote；新卡（第 2 个）切 http
+    const kindSelects = screen.getAllByRole("combobox");
+    expect(kindSelects).toHaveLength(3);
+    fireEvent.change(kindSelects[1], { target: { value: "http" } });
+    fireEvent.change(screen.getAllByPlaceholderText("https://mcp.example.com/mcp")[0], { target: { value: "https://x" } });
+    // headersText：无 ":" 的行丢弃；"B:"（空值）保留；"=" 解析路径由 fs 条目的 env 覆盖
+    fireEvent.change(screen.getAllByPlaceholderText(/Authorization: Bearer/)[0], { target: { value: "A: 1\nbadline\nB: " } });
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(tauri.saveMcpGlobal).toHaveBeenCalled());
+    const g = (tauri.saveMcpGlobal as any).mock.calls[0][0];
+    expect(g).toEqual([
+      { name: "fs", command: "npx", args: ["-y"], env: { K: "v" }, url: "", headers: {}, timeout: 5 },
+      { name: "g2", command: "", args: [], env: {}, url: "https://x", headers: { A: "1", B: "" }, timeout: null },
+    ]);
+    expect(tauri.saveMcpProject).toHaveBeenCalledWith("/tmp/ws", [
+      { name: "remote", command: "", args: [], env: {}, url: "https://mcp.example.com", headers: { Authorization: "Bearer x" }, timeout: null },
+    ]);
+    await waitFor(() => expect(screen.getByText(/已保存/)).toBeInTheDocument());
+  });
+
+  it("无打开项目：项目区置灰提示，保存仅调用 saveMcpGlobal", async () => {
+    (tauri.getMcp as any).mockResolvedValue({
+      global: [{ name: "fs", command: "npx", args: [], env: {}, url: "", headers: {}, timeout: null }],
+      project: null,
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} activeWorkspace={null} />);
+    fireEvent.click(screen.getByText("MCP"));
+    expect(tauri.getMcp).toHaveBeenCalledWith(null);
+    await waitFor(() => expect(screen.getByPlaceholderText(/server 名称/)).toBeInTheDocument());
+    expect(screen.getByText(/未打开项目/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(tauri.saveMcpGlobal).toHaveBeenCalled());
+    expect(tauri.saveMcpProject).not.toHaveBeenCalled();
+  });
+
+  it("校验拦截：command/url 皆空的非法条目保存报错（与 PHP 语义对齐）", async () => {
+    (tauri.getMcp as any).mockResolvedValue({
+      global: [{ name: "bad", command: "", args: [], env: {}, url: "", headers: {}, timeout: null }],
+      project: null,
+    });
+    useUiStore.getState().setSettingsOpen(true);
+    render(<SettingsDialog testUrl={null} activeWorkspace="/tmp/ws" />);
+    fireEvent.click(screen.getByText("MCP"));
+    await waitFor(() => expect(screen.getByPlaceholderText(/server 名称/)).toBeInTheDocument());
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(screen.getByText(/二选一/)).toBeInTheDocument());
+    expect(tauri.saveMcpGlobal).not.toHaveBeenCalled();
+    expect(tauri.saveMcpProject).not.toHaveBeenCalled();
   });
 });
