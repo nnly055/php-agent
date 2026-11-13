@@ -1,17 +1,32 @@
-import { useState, useRef, type KeyboardEvent } from "react";
+import { useState, useRef, type KeyboardEvent, type ClipboardEvent } from "react";
 import { useProjectStore } from "../../store/useProjectStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Button } from "../ui/button";
-import { SendHorizonal, Square } from "lucide-react";
+import { SendHorizonal, Square, ImagePlus, X } from "lucide-react";
+import { MAX_IMAGES, fileToAttachment } from "../../lib/imageFile";
+import type { ImageAttachment } from "../../lib/api";
 
-export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onAbort: () => void }) {
+type Attachment = ImageAttachment & { previewUrl: string };
+
+// 回收缩略图 object URL 防内存泄漏；个别环境（如 jsdom）缺 revokeObjectURL，缺失时跳过（仅滞留内存，无功能影响）
+function revokePreview(url: string) {
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    /* 环境不支持，忽略 */
+  }
+}
+
+export function Composer({ onSend, onAbort }: { onSend: (t: string, images: ImageAttachment[]) => void; onAbort: () => void }) {
   const store = useProjectStore();
   const streaming = store((s) => s.streaming);
   const selection = store((s) => s.selection);
   const setSelection = store((s) => s.setSelection);
   const profilesPayload = useUiStore((s) => s.profilesPayload);
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 对话内切换器：目录为空（无 profiles）时整行不渲染
   const profiles = profilesPayload?.profiles ?? [];
@@ -25,10 +40,43 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onA
   // 平台同样兜底：selection 指向的档不在目录（如被删除）时插入临时 option 防空白
   const platformTemp = activeId !== "" && !profiles.some((p) => p.id === activeId);
 
+  // 图片附件入口（选图 + 粘贴共用）：只收 image/*，且不超剩余配额；逐个预处理，失败走错误横幅
+  async function addFiles(fileList: FileList | File[]) {
+    const room = MAX_IMAGES - attachments.length;
+    const files = Array.from(fileList)
+      .filter((f) => f.type.startsWith("image/"))
+      .slice(0, Math.max(0, room));
+    for (const f of files) {
+      try {
+        const att = await fileToAttachment(f);
+        // 双保险：等待期间配额可能被并发批次占满，仍不超 MAX_IMAGES
+        setAttachments((prev) => (prev.length >= MAX_IMAGES ? prev : [...prev, att]));
+      } catch (e) {
+        store.getState().setError(e instanceof Error ? e.message : "图片处理失败");
+      }
+    }
+  }
+  function removeAttachment(index: number) {
+    setAttachments((prev) => {
+      const att = prev[index];
+      if (att) revokePreview(att.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
+  }
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = e.clipboardData?.files;
+    if (!files || files.length === 0) return; // 纯文本粘贴走默认行为
+    if (!Array.from(files).some((f) => f.type.startsWith("image/"))) return;
+    void addFiles(files).catch(() => {});
+  }
+
   function submit() {
     const t = text.trim();
-    if (!t || streaming) return;
-    onSend(t);
+    if ((!t && attachments.length === 0) || streaming) return;
+    // 只上送 wire 字段，previewUrl 是本地 object URL 不外发
+    onSend(t, attachments.map(({ mediaType, data }) => ({ mediaType, data })));
+    attachments.forEach((a) => revokePreview(a.previewUrl));
+    setAttachments([]);
     setText("");
   }
   function onKey(e: KeyboardEvent) {
@@ -71,12 +119,51 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onA
             </select>
           </div>
         )}
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {attachments.map((a, i) => (
+              <div key={a.previewUrl} className="relative">
+                <img src={a.previewUrl} alt={`图片附件 ${i + 1}`} className="h-16 w-16 rounded-lg border border-border object-cover" />
+                <button
+                  type="button"
+                  aria-label="移除图片"
+                  onClick={() => removeAttachment(i)}
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-danger text-white"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-11 w-11 shrink-0 text-muted hover:text-ink"
+            onClick={() => fileInputRef.current?.click()}
+            title="添加图片"
+          >
+            <ImagePlus size={18} />
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            aria-label="添加图片"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) void addFiles(e.target.files);
+              e.target.value = ""; // 允许再次选择同一文件
+            }}
+          />
           <textarea
             ref={ref}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
+            onPaste={onPaste}
             rows={1}
             placeholder="输入任务…（Enter 发送，Shift+Enter 换行）"
             className="max-h-40 flex-1 resize-none rounded-xl border border-border bg-bg px-4 py-3 text-sm text-ink outline-none transition-colors placeholder:text-muted focus:border-primary"
@@ -86,7 +173,7 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string) => void; onA
               <Square size={16} />
             </Button>
           ) : (
-            <Button size="icon" className="h-11 w-11 bg-primary-deep text-white hover:bg-primary" onClick={submit} disabled={!text.trim()} title="发送">
+            <Button size="icon" className="h-11 w-11 bg-primary-deep text-white hover:bg-primary" onClick={submit} disabled={!text.trim() && attachments.length === 0} title="发送">
               <SendHorizonal size={18} />
             </Button>
           )}

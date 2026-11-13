@@ -4,6 +4,16 @@ import { Composer } from "./Composer";
 import { useAppStore } from "../../store/useAppStore";
 import { useUiStore } from "../../store/useUiStore";
 
+// jsdom 无 canvas/createImageBitmap：mock 掉预处理模块，fileToAttachment 返回固定附件
+vi.mock("../../lib/imageFile", () => ({
+  MAX_IMAGES: 5,
+  fileToAttachment: vi.fn(async () => ({
+    mediaType: "image/png",
+    data: "AAAA",
+    previewUrl: "data:image/png;base64,AAAA",
+  })),
+}));
+
 // Task 14 起后端以对象序列化模型（ModelEntry）：mock 同步为 { name } 形式
 const payload = {
   profiles: [
@@ -31,7 +41,7 @@ describe("Composer IME guard", () => {
     const ta = screen.getByPlaceholderText(/输入任务/);
     fireEvent.change(ta, { target: { value: "hello" } });
     fireEvent.keyDown(ta, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("hello");
+    expect(onSend).toHaveBeenCalledWith("hello", []);
   });
 });
 
@@ -92,5 +102,60 @@ describe("Composer 平台/模型切换器", () => {
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
     expect(screen.getAllByRole("combobox")[1]).toHaveValue("deepseek-chat");
     expect(screen.queryByRole("option", { name: "phantom-model" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Composer 图片附件", () => {
+  const pngFile = () => new File(["x"], "a.png", { type: "image/png" });
+
+  beforeEach(() => {
+    useUiStore.getState().setProfilesPayload(null);
+    useAppStore.getState().reset();
+  });
+
+  it("附件按钮选图后出现缩略图，可删除，Enter 发送携带 images", async () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} onAbort={vi.fn()} />);
+    const input = screen.getByLabelText("添加图片");
+    fireEvent.change(input, { target: { files: [pngFile()] } });
+    // 缩略图出现（fileToAttachment 异步）
+    expect(await screen.findByRole("img")).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    // 点删除按钮 → 缩略图消失
+    fireEvent.click(screen.getByLabelText("移除图片"));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    // 删除后无文本无附件，Enter 不发送
+    fireEvent.keyDown(screen.getByPlaceholderText(/输入任务/), { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+    // 再次选图后 Enter 发送，携带 images 数组（previewUrl 不上送）
+    fireEvent.change(input, { target: { files: [pngFile()] } });
+    await screen.findByRole("img");
+    fireEvent.keyDown(screen.getByPlaceholderText(/输入任务/), { key: "Enter" });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith("", [{ mediaType: "image/png", data: "AAAA" }]);
+    // 发送后清空附件
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("粘贴图片文件进预览，非图片 MIME 被忽略", async () => {
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
+    const ta = screen.getByPlaceholderText(/输入任务/);
+    const textFile = new File(["y"], "a.txt", { type: "text/plain" });
+    fireEvent.paste(ta, { clipboardData: { files: [pngFile(), textFile] } });
+    const thumbs = await screen.findAllByRole("img");
+    expect(thumbs).toHaveLength(1);
+    expect(thumbs[0]).toHaveAttribute("src", "data:image/png;base64,AAAA");
+  });
+
+  it("纯图可发送（文本为空）", async () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} onAbort={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("添加图片"), { target: { files: [pngFile()] } });
+    await screen.findByRole("img");
+    const sendBtn = screen.getByTitle("发送");
+    expect(sendBtn).not.toBeDisabled();
+    fireEvent.click(sendBtn);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith("", [{ mediaType: "image/png", data: "AAAA" }]);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 });
