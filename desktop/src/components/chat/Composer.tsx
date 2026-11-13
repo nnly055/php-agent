@@ -25,6 +25,14 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
   const profilesPayload = useUiStore((s) => s.profilesPayload);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // attachments 的同步镜像：addFiles 的配额判定要读"此刻"的长度，函数式 setState 的
+  // updater 执行时机不保证同步（可能被 React 推迟到渲染期），据此计数会丢/错报超限提示。
+  // 所有变更路径（增/删/清空）都经 setAtts 同步维护，检查与写入间无 await，天然防并发批次竞争。
+  const attachmentsRef = useRef<Attachment[]>([]);
+  const setAtts = (next: Attachment[]) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  };
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -40,28 +48,34 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
   // 平台同样兜底：selection 指向的档不在目录（如被删除）时插入临时 option 防空白
   const platformTemp = activeId !== "" && !profiles.some((p) => p.id === activeId);
 
-  // 图片附件入口（选图 + 粘贴共用）：只收 image/*，且不超剩余配额；逐个预处理，失败走错误横幅
+  // 图片附件入口（选图 + 粘贴共用）：只收 image/*，且不超剩余配额；逐个预处理，失败走错误横幅。
+  // 超限的文件一律计数并经 setError 提示（spec §2 超限提示）：批内超限在切片时点直接计入
+  // （不浪费预处理），等待预处理期间配额被并发批次占满的在途丢弃也计入。
   async function addFiles(fileList: FileList | File[]) {
-    const room = MAX_IMAGES - attachments.length;
-    const files = Array.from(fileList)
-      .filter((f) => f.type.startsWith("image/"))
-      .slice(0, Math.max(0, room));
-    for (const f of files) {
+    const room = Math.max(0, MAX_IMAGES - attachmentsRef.current.length);
+    const images = Array.from(fileList).filter((f) => f.type.startsWith("image/"));
+    let ignored = Math.max(0, images.length - room);
+    for (const f of images.slice(0, room)) {
       try {
         const att = await fileToAttachment(f);
-        // 双保险：等待期间配额可能被并发批次占满，仍不超 MAX_IMAGES
-        setAttachments((prev) => (prev.length >= MAX_IMAGES ? prev : [...prev, att]));
+        // 双保险：等待预处理期间配额可能被并发批次占满，仍不超 MAX_IMAGES（此丢弃同样计入提示）
+        if (attachmentsRef.current.length >= MAX_IMAGES) {
+          ignored += 1;
+          continue;
+        }
+        setAtts([...attachmentsRef.current, att]);
       } catch (e) {
         store.getState().setError(e instanceof Error ? e.message : "图片处理失败");
       }
     }
+    if (ignored > 0) {
+      store.getState().setError(`最多添加 ${MAX_IMAGES} 张图片，已忽略 ${ignored} 张`);
+    }
   }
   function removeAttachment(index: number) {
-    setAttachments((prev) => {
-      const att = prev[index];
-      if (att) revokePreview(att.previewUrl);
-      return prev.filter((_, i) => i !== index);
-    });
+    const att = attachmentsRef.current[index];
+    if (att) revokePreview(att.previewUrl);
+    setAtts(attachmentsRef.current.filter((_, i) => i !== index));
   }
   function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
     const files = e.clipboardData?.files;
@@ -76,7 +90,7 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
     // 只上送 wire 字段，previewUrl 是本地 object URL 不外发
     onSend(t, attachments.map(({ mediaType, data }) => ({ mediaType, data })));
     attachments.forEach((a) => revokePreview(a.previewUrl));
-    setAttachments([]);
+    setAtts([]);
     setText("");
   }
   function onKey(e: KeyboardEvent) {

@@ -23,12 +23,16 @@ use PhpAgent\Server\ProfileRegistry;
 use React\EventLoop\Loop;
 use React\Http\HttpServer;
 use React\Http\Message\Response;
+use React\Http\Middleware\LimitConcurrentRequestsMiddleware;
 use React\Http\Middleware\RequestBodyBufferMiddleware;
 use React\Http\Middleware\RequestBodyParserMiddleware;
 use React\Http\Middleware\StreamingRequestMiddleware;
 use React\Socket\SocketServer;
 
 require __DIR__ . '/../vendor/autoload.php';
+
+// 图片 base64 内联：5×5MB 一轮峰值 ~105MB，128M 默认会 OOM 杀死 SSE worker；react/http 文档明确要求放大 buffer 时同步上调
+ini_set('memory_limit', '512M');
 
 $root = dirname(__DIR__);
 putenv('AGENT_UI=server'); // diff 预览钩子据此抑制 stdout echo
@@ -72,11 +76,14 @@ $server = new AgentServer($loop, $kernel->sessionStore(), $hooks, $root . '/publ
 
 // 显式中间件栈把请求体上限从默认 64KiB 提到 40MB（图片 base64 内联）。
 // StreamingRequestMiddleware 用于关闭 HttpServer 自动注入的 64KiB 缓冲中间件（默认上限先生效，显式 40MB 形同虚设）。
-// react/http 对超限 body 的行为是静默清空而非 413，故缓冲之后补一道检查：Content-Length 超上限而 body 为空 → 413。
+// react/http 对超限 body 的行为是静默清空而非 413，故缓冲之前用 LimitConcurrentRequestsMiddleware
+// 恢复默认栈的聚合缓冲上限（默认栈 = Limit → Buffer，约 memory_limit/2 总量），否则 N 个 ≤40MB 请求可各自缓冲 40MB 无上限。
+// 对超限 body 的行为是静默清空而非 413，故缓冲之后补一道检查：Content-Length 超上限而 body 为空 → 413。
 $bodyLimit = 40 * 1024 * 1024;
 $http = new HttpServer(
     Loop::get(),
     new StreamingRequestMiddleware(),
+    new LimitConcurrentRequestsMiddleware(4),
     new RequestBodyBufferMiddleware($bodyLimit),
     static function (\Psr\Http\Message\ServerRequestInterface $request, callable $next) use ($bodyLimit) {
         if ((int) $request->getHeaderLine('Content-Length') > $bodyLimit && $request->getBody()->getSize() === 0) {

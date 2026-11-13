@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
 import { useAppStore } from "../../store/useAppStore";
 import { useUiStore } from "../../store/useUiStore";
+import { MAX_IMAGES, fileToAttachment } from "../../lib/imageFile";
 
-// jsdom 无 canvas/createImageBitmap：mock 掉预处理模块，fileToAttachment 返回固定附件
+// jsdom 无 canvas/createImageBitmap：mock 掉预处理模块，fileToAttachment 返回固定附件。
+// previewUrl 按文件名唯一：组件以 previewUrl 为缩略图 key，重名会互相吞掉（生产环境 object URL 天然唯一）
 vi.mock("../../lib/imageFile", () => ({
   MAX_IMAGES: 5,
-  fileToAttachment: vi.fn(async () => ({
+  fileToAttachment: vi.fn(async (f: File) => ({
     mediaType: "image/png",
     data: "AAAA",
-    previewUrl: "data:image/png;base64,AAAA",
+    previewUrl: `data:image/png;base64,AAAA-${f.name}`,
   })),
 }));
 
@@ -119,7 +121,7 @@ describe("Composer 图片附件", () => {
     const input = screen.getByLabelText("添加图片");
     fireEvent.change(input, { target: { files: [pngFile()] } });
     // 缩略图出现（fileToAttachment 异步）
-    expect(await screen.findByRole("img")).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    expect(await screen.findByRole("img")).toHaveAttribute("src", "data:image/png;base64,AAAA-a.png");
     // 点删除按钮 → 缩略图消失
     fireEvent.click(screen.getByLabelText("移除图片"));
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
@@ -143,7 +145,7 @@ describe("Composer 图片附件", () => {
     fireEvent.paste(ta, { clipboardData: { files: [pngFile(), textFile] } });
     const thumbs = await screen.findAllByRole("img");
     expect(thumbs).toHaveLength(1);
-    expect(thumbs[0]).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    expect(thumbs[0]).toHaveAttribute("src", "data:image/png;base64,AAAA-a.png");
   });
 
   it("纯图可发送（文本为空）", async () => {
@@ -157,5 +159,30 @@ describe("Composer 图片附件", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith("", [{ mediaType: "image/png", data: "AAAA" }]);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("超限提示：一次选 MAX_IMAGES+2 张，超出部分被忽略并 setError「已忽略 N 张」，缩略图不超配额", async () => {
+    const setError = vi.spyOn(useAppStore.getState(), "setError");
+    setError.mockClear();
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
+    const files = Array.from({ length: MAX_IMAGES + 2 }, (_, i) => new File(["x"], `a${i}.png`, { type: "image/png" }));
+    fireEvent.change(screen.getByLabelText("添加图片"), { target: { files } });
+    // 只保留 MAX_IMAGES=5 张缩略图（plan Task 9 Step 1：超 5 张路径）；逐个预处理是异步的，等全部落地
+    await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(MAX_IMAGES));
+    expect(setError).toHaveBeenCalledWith(`最多添加 ${MAX_IMAGES} 张图片，已忽略 2 张`);
+  });
+
+  it("预处理失败降级：fileToAttachment 拒绝 → setError 且不加缩略图，后续好文件仍可添加", async () => {
+    const setError = vi.spyOn(useAppStore.getState(), "setError");
+    setError.mockClear();
+    vi.mocked(fileToAttachment).mockRejectedValueOnce(new Error("图片解码失败"));
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
+    const input = screen.getByLabelText("添加图片");
+    fireEvent.change(input, { target: { files: [pngFile()] } });
+    await waitFor(() => expect(setError).toHaveBeenCalledWith("图片解码失败"));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    // 降级不中断功能：随后的正常文件照常出缩略图
+    fireEvent.change(input, { target: { files: [pngFile()] } });
+    expect(await screen.findByRole("img")).toHaveAttribute("src", "data:image/png;base64,AAAA-a.png");
   });
 });
