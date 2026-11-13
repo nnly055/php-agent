@@ -16,7 +16,8 @@ use PhpAgent\Mcp\StdioTransport;
 use PhpAgent\Mcp\Transport;
 
 /**
- * MCP 客户端插件：读 <workspace>/.mcp.json → 逐个连接 → 工具挂进 ToolRegistry。
+ * MCP 客户端插件：读全局 ~/.php-agent/mcp.json + <workspace>/.mcp.json（项目同名覆盖全局，
+ * 见 McpConfig）→ 逐个连接 → 工具挂进 ToolRegistry。
  * 配置缺失静默跳过；单个 server 失败警告后跳过，不阻塞其余工具。
  * 退出时由 register_shutdown_function 统一关闭连接（杀 stdio 子进程）。
  */

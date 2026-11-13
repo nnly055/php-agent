@@ -606,24 +606,53 @@ fn write_mcp_file(path: &std::path::Path, entries: &[McpServerEntry]) -> Result<
         }
         map.insert(e.name.clone(), v);
     }
+    let text = serde_json::json!({ "mcpServers": serde_json::Value::Object(map) }).to_string();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
-    let text = serde_json::json!({ "mcpServers": serde_json::Value::Object(map) }).to_string();
-    std::fs::write(path, text).map_err(|err| err.to_string())
+    // 原子写：同目录临时文件（0600，env 常含 token）+ rename——写中崩溃不留半截 JSON 被 PHP 当损坏
+    let tmp = path.with_extension("json.tmp");
+    if let Err(err) = write_tmp_0600(&tmp, &text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    std::fs::rename(&tmp, path).map_err(|err| {
+        let _ = std::fs::remove_file(&tmp);
+        err.to_string()
+    })
+}
+
+/// 0600 写临时文件（unix 收权限，其他平台普通写）
+fn write_tmp_0600(tmp: &std::path::Path, text: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(tmp)
+            .map_err(|err| err.to_string())?;
+        f.write_all(text.as_bytes()).map_err(|err| err.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(tmp, text).map_err(|err| err.to_string())
+    }
 }
 
 #[tauri::command]
-fn get_mcp(workspace: Option<String>) -> Result<serde_json::Value, String> {
-    let global = parse_mcp_file(&global_mcp_path())?;
-    let project = match workspace {
+fn get_mcp(state: State<AppState>, workspace: Option<String>) -> Result<serde_json::Value, String> {
+    let project = match workspace.as_deref() {
         Some(ws) if !ws.is_empty() => {
-            let path = PathBuf::from(ws).join(".mcp.json");
-            Some(parse_mcp_file(&path)?)
+            ensure_workspace_known(&state, ws)?;
+            Some(PathBuf::from(ws).join(".mcp.json"))
         }
         _ => None,
     };
-    Ok(serde_json::json!({ "global": global, "project": project }))
+    Ok(mcp_payload(&global_mcp_path(), project.as_deref()))
 }
 
 #[tauri::command]
@@ -632,8 +661,53 @@ fn save_mcp_global(servers: Vec<McpServerEntry>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn save_mcp_project(workspace: String, servers: Vec<McpServerEntry>) -> Result<(), String> {
+fn save_mcp_project(state: State<AppState>, workspace: String, servers: Vec<McpServerEntry>) -> Result<(), String> {
+    ensure_workspace_known(&state, &workspace)?;
     write_mcp_file(&PathBuf::from(workspace).join(".mcp.json"), &servers)
+}
+
+/// workspace 必须是已登记项目或运行中会话的工作区（设置对话框传 activeWorkspace；
+/// 挡住渲染层对任意路径 .mcp.json 的读写。恢复上次会话的 tab 只保证有运行中会话，
+/// 不一定在 projects 列表里，故取并集）。
+fn ensure_workspace_known(state: &State<AppState>, workspace: &str) -> Result<(), String> {
+    let projects = state.projects.lock().unwrap().clone();
+    let session_workspaces: Vec<String> = state
+        .sessions
+        .lock()
+        .unwrap()
+        .values()
+        .map(|r| r.workspace.clone())
+        .collect();
+    if workspace_registered(&projects, &session_workspaces, workspace) {
+        Ok(())
+    } else {
+        Err(format!("项目 {workspace} 未登记，拒绝读写其 .mcp.json"))
+    }
+}
+
+/// workspace 登记判定（projects ∪ 运行中会话工作区）；纯函数便于测试
+fn workspace_registered(projects: &[String], session_workspaces: &[String], workspace: &str) -> bool {
+    projects.iter().any(|p| p == workspace)
+        || session_workspaces.iter().any(|w| w == workspace)
+}
+
+/// 两层 payload：层内失败不互相拖垮——errors.global / errors.project 为字符串 = 该层
+/// 损坏/不可读（前端对该层禁用保存并显示重试，防止用空数据覆盖真实配置），null = 正常
+fn mcp_payload(global: &std::path::Path, project: Option<&std::path::Path>) -> serde_json::Value {
+    let (global, err_g) = match parse_mcp_file(global) {
+        Ok(v) => (v, serde_json::Value::Null),
+        Err(e) => (Vec::new(), serde_json::Value::String(e)),
+    };
+    let (project, err_p) = match project.map(parse_mcp_file) {
+        Some(Ok(v)) => (Some(v), serde_json::Value::Null),
+        Some(Err(e)) => (None, serde_json::Value::String(e)),
+        None => (None, serde_json::Value::Null),
+    };
+    serde_json::json!({
+        "global": global,
+        "project": project,
+        "errors": { "global": err_g, "project": err_p },
+    })
 }
 
 #[tauri::command]
@@ -951,5 +1025,61 @@ mod tests {
         }
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn write_mcp_file_atomic_and_0600() {
+        let dir = std::env::temp_dir().join(format!("php-agent-mcp-rs-w-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        write_mcp_file(&path, &[mcp_entry("a", "php")]).unwrap();
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["mcp.json".to_string()], "写完不留临时文件");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "mcp.json 以 0600 落盘（env 常含 token）");
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn mcp_payload_layers_fail_independently() {
+        let dir = std::env::temp_dir().join(format!("php-agent-mcp-rs-l-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let gp = dir.join("g.json");
+        let pp = dir.join("p.json");
+        // 两层皆缺失 → 空全局 / 空项目列表（文件缺失 ≠ 损坏，UI 仍可编辑）/ 全 null errors
+        let v = mcp_payload(&gp, Some(&pp));
+        assert_eq!(v["global"], serde_json::json!([]));
+        assert_eq!(v["project"], serde_json::json!([]));
+        assert_eq!(v["errors"]["global"], serde_json::Value::Null);
+        assert_eq!(v["errors"]["project"], serde_json::Value::Null);
+        // 全局正常 + 项目损坏 → 项目层 error，全局不受拖累
+        std::fs::write(&gp, r#"{"mcpServers":{"a":{"command":"php"}}}"#).unwrap();
+        std::fs::write(&pp, "{ nope").unwrap();
+        let v = mcp_payload(&gp, Some(&pp));
+        assert_eq!(v["global"][0]["name"], "a");
+        assert_eq!(v["project"], serde_json::Value::Null);
+        assert!(v["errors"]["project"].is_string(), "项目层损坏 → errors.project 为字符串");
+        assert_eq!(v["errors"]["global"], serde_json::Value::Null);
+        std::fs::remove_file(&gp).unwrap();
+        std::fs::remove_file(&pp).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn workspace_registered_matches_projects_or_sessions() {
+        let projects = vec!["/a".to_string()];
+        let sessions = vec!["/b".to_string()];
+        assert!(workspace_registered(&projects, &sessions, "/a"));
+        assert!(workspace_registered(&projects, &sessions, "/b"));
+        assert!(!workspace_registered(&projects, &[], "/c"), "两者皆无 = 未登记");
     }
 }
