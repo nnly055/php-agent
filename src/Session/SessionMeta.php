@@ -24,11 +24,18 @@ final class SessionMeta
             if (($m['role'] ?? '') !== 'user') {
                 continue;
             }
+            $hasImage = false;
             foreach ($m['content'] as $b) {
+                if (($b['type'] ?? '') === 'image') {
+                    $hasImage = true;
+                }
                 if (($b['type'] ?? '') === 'text' && trim((string) ($b['text'] ?? '')) !== '') {
                     $t = trim((string) preg_replace('/\s+/u', ' ', $b['text']));
                     return mb_strlen($t) > 40 ? mb_substr($t, 0, 40) . '…' : $t;
                 }
+            }
+            if ($hasImage) {
+                return '[图片]';
             }
         }
         return '(空会话)';

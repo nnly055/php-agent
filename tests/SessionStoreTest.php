@@ -7,6 +7,7 @@ namespace PhpAgent\Tests;
 use PhpAgent\Session\Store\InMemorySessionStore;
 use PhpAgent\Session\Store\JsonFileSessionStore;
 use PhpAgent\Session\Store\RedisSessionStore;
+use PhpAgent\Session\SessionMeta;
 use PhpAgent\Session\SessionStore;
 use PhpAgent\Session\Store\Sqlite3SessionStore;
 use PHPUnit\Framework\TestCase;
@@ -196,5 +197,14 @@ final class SessionStoreTest extends TestCase
 
         $store->delete($id);
         self::assertSame([], $store->load($id));
+    }
+
+    public function testDeriveTitleFallsBackToImagePlaceholder(): void
+    {
+        $img = ['role' => 'user', 'content' => [['type' => 'image', 'media_type' => 'image/png', 'data' => 'AAAA']]];
+        self::assertSame('[图片]', SessionMeta::deriveTitle([$img]));
+        // 图文混合：文本优先
+        $both = ['role' => 'user', 'content' => [['type' => 'image', 'media_type' => 'image/png', 'data' => 'AAAA'], ['type' => 'text', 'text' => '看这里']]];
+        self::assertSame('看这里', SessionMeta::deriveTitle([$both]));
     }
 }
