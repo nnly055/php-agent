@@ -43,7 +43,7 @@ describe("SessionHeader", () => {
       defaultProfile: "p-1",
       defaultModel: "gpt-4o",
     });
-    useAppStore.getState().setSelection({ profileId: "p-2", model: "glm-4.7" });
+    useAppStore.getState().setSelection({ profileId: "p-2", model: "glm-4.7", effort: "off" });
     render(<SessionHeader />);
     expect(screen.getByText("GLM▸glm-4.7")).toBeInTheDocument();
   });

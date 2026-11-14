@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { SessionMeta } from "../../lib/api";
+import type { Effort, SessionMeta } from "../../lib/api";
 import { relativeTime } from "../../lib/relativeTime";
 import { type ChatMessage, type ToolCard } from "../../store/useAppStore";
 import { useProjectStore } from "../../store/useProjectStore";
@@ -50,9 +50,13 @@ export function SessionItem({ meta, onActivate }: { meta: SessionMeta; onActivat
     try {
       const { messages } = await loadSession(store.getState().backendUrl, meta.id);
       store.getState().setActiveSession(meta.id, toChatMessages(messages));
-      // 恢复该会话落库时的平台/模型选择（meta 来自 /sessions 列表项）
-      if (meta.profileId || meta.model) {
-        store.getState().setSelection({ profileId: meta.profileId ?? null, model: meta.model ?? null });
+      // 恢复该会话落库时的平台/模型/强度选择（meta 来自 /sessions 列表项）
+      if (meta.profileId || meta.model || meta.effort) {
+        store.getState().setSelection({
+          profileId: meta.profileId ?? null,
+          model: meta.model ?? null,
+          effort: (meta.effort as Effort) ?? "off",
+        });
       }
     } catch (e: any) {
       store.getState().setError(e?.message ?? "加载会话失败");

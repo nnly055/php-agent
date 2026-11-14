@@ -47,11 +47,11 @@ describe("useAgentStream.answerConfirm", () => {
   it("passes the store selection to agentStream as the 5th arg", async () => {
     (api.agentStream as any).mockImplementationOnce(async function* () {});
     useAppStore.getState().setActiveSession("s-sel", []);
-    useAppStore.getState().setSelection({ profileId: "p-9", model: "m-9" });
+    useAppStore.getState().setSelection({ profileId: "p-9", model: "m-9", effort: "off" });
     const { result } = renderHook(() => useAgentStream());
     await act(async () => { await result.current.send("带选择发送"); });
     expect(api.agentStream).toHaveBeenCalledWith(
-      expect.any(String), "带选择发送", "s-sel", expect.any(AbortSignal), { profileId: "p-9", model: "m-9" }, undefined,
+      expect.any(String), "带选择发送", "s-sel", expect.any(AbortSignal), { profileId: "p-9", model: "m-9", effort: "off" }, undefined,
     );
   });
 
@@ -61,31 +61,31 @@ describe("useAgentStream.answerConfirm", () => {
     const { result } = renderHook(() => useAgentStream());
     await act(async () => { await result.current.send("默认发送"); });
     expect(api.agentStream).toHaveBeenLastCalledWith(
-      expect.any(String), "默认发送", "s-def", expect.any(AbortSignal), { profileId: null, model: null }, undefined,
+      expect.any(String), "默认发送", "s-def", expect.any(AbortSignal), { profileId: null, model: null, effort: "off" }, undefined,
     );
   });
 
   it("新会话发送后 selection 保持用户所选（重置不吞掉发送前选择）", async () => {
     (api.agentStream as any).mockImplementationOnce(async function* () {});
     // 不预设 activeSession：走 send() 内的"新会话"分支（setActiveSession 会重置 selection）
-    useAppStore.getState().setSelection({ profileId: "p-2", model: "glm-4.7" });
+    useAppStore.getState().setSelection({ profileId: "p-2", model: "glm-4.7", effort: "off" });
     const { result } = renderHook(() => useAgentStream());
     await act(async () => { await result.current.send("新会话首条"); });
     // 消息 1 携带用户所选
     expect(api.agentStream).toHaveBeenLastCalledWith(
-      expect.any(String), "新会话首条", expect.any(String), expect.any(AbortSignal), { profileId: "p-2", model: "glm-4.7" }, undefined,
+      expect.any(String), "新会话首条", expect.any(String), expect.any(AbortSignal), { profileId: "p-2", model: "glm-4.7", effort: "off" }, undefined,
     );
     // send 完成后 store 仍保持所选（composer 不跳回默认档）
-    expect(useAppStore.getState().selection).toEqual({ profileId: "p-2", model: "glm-4.7" });
+    expect(useAppStore.getState().selection).toEqual({ profileId: "p-2", model: "glm-4.7", effort: "off" });
   });
 
   it("新会话未选时保持重置态（继承默认档）", async () => {
     (api.agentStream as any).mockImplementationOnce(async function* () {});
     const { result } = renderHook(() => useAgentStream());
     await act(async () => { await result.current.send("未选发送"); });
-    expect(useAppStore.getState().selection).toEqual({ profileId: null, model: null });
+    expect(useAppStore.getState().selection).toEqual({ profileId: null, model: null, effort: "off" });
     expect(api.agentStream).toHaveBeenLastCalledWith(
-      expect.any(String), "未选发送", expect.any(String), expect.any(AbortSignal), { profileId: null, model: null }, undefined,
+      expect.any(String), "未选发送", expect.any(String), expect.any(AbortSignal), { profileId: null, model: null, effort: "off" }, undefined,
     );
   });
 });
@@ -101,7 +101,7 @@ describe("useAgentStream.send images 透传", () => {
     await act(async () => { await result.current.send("hi", [img]); });
     // camelCase images 原样透传给 agentStream 第 6 参（snake_case 映射由 api 层负责）
     expect(api.agentStream).toHaveBeenLastCalledWith(
-      expect.any(String), "hi", "s-img", expect.any(AbortSignal), { profileId: null, model: null }, [img],
+      expect.any(String), "hi", "s-img", expect.any(AbortSignal), { profileId: null, model: null, effort: "off" }, [img],
     );
     expect(useAppStore.getState().messages[0]).toMatchObject({ role: "user", text: "hi", images: [img] });
   });

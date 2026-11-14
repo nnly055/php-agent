@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { ArrowUp, Square, ImagePlus, X, ShieldCheck, ShieldOff } from "lucide-react";
 import { MAX_IMAGES, fileToAttachment } from "../../lib/imageFile";
 import type { ImageAttachment } from "../../lib/api";
+import { ModelPicker } from "./ModelPicker";
 
 type Attachment = ImageAttachment & { previewUrl: string };
 
@@ -21,9 +22,6 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
   const store = useProjectStore();
   const streaming = store((s) => s.streaming);
   const status = store((s) => s.status);
-  const selection = store((s) => s.selection);
-  const setSelection = store((s) => s.setSelection);
-  const profilesPayload = useUiStore((s) => s.profilesPayload);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // attachments 的同步镜像：addFiles 的配额判定要读"此刻"的长度，函数式 setState 的
@@ -36,18 +34,6 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
   };
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // 对话内切换器：目录为空（无 profiles）时整行不渲染
-  const profiles = profilesPayload?.profiles ?? [];
-  const activeId = selection.profileId ?? profilesPayload?.defaultProfile ?? "";
-  const activeProfile = profiles.find((p) => p.id === activeId);
-  // 当前模型：会话选择 > 当前平台首个（defaultModel 不参与：服务端从不使用，显示≠实际会谎报）
-  // 模型条目为对象（ModelEntry）：下拉只消费 name 字符串
-  const currentModel = selection.model ?? activeProfile?.models[0]?.name ?? "";
-  const models = activeProfile?.models.map((m) => m.name) ?? [];
-  const modelTemp = currentModel !== "" && !models.includes(currentModel);
-  // 平台同样兜底：selection 指向的档不在目录（如被删除）时插入临时 option 防空白
-  const platformTemp = activeId !== "" && !profiles.some((p) => p.id === activeId);
 
   // 图片附件入口（选图 + 粘贴共用）：只收 image/*，且不超剩余配额；逐个预处理，失败走错误横幅。
   // 超限的文件一律计数并经 setError 提示（spec §2 超限提示）：批内超限在切片时点直接计入
@@ -165,37 +151,7 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
             </button>
           )}
           <div className="ml-auto flex items-center gap-1.5">
-            {profiles.length > 0 && (
-              <>
-                <select
-                  aria-label="平台"
-                  value={activeId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    // 切平台回落该档首个模型名，避免带着别的平台的模型名发请求
-                    const first = profiles.find((p) => p.id === id)?.models[0]?.name ?? null;
-                    setSelection({ profileId: id, model: first });
-                  }}
-                  className="rounded-md bg-transparent px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:bg-elevated"
-                >
-                  {platformTemp && <option value={activeId}>{activeId}</option>}
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name || p.provider}</option>
-                  ))}
-                </select>
-                <select
-                  aria-label="模型"
-                  value={currentModel}
-                  onChange={(e) => setSelection({ profileId: activeId, model: e.target.value })}
-                  className="max-w-44 rounded-md bg-transparent px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:bg-elevated"
-                >
-                  {modelTemp && <option value={currentModel}>{currentModel}</option>}
-                  {models.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </>
-            )}
+            <ModelPicker />
             {streaming ? (
               <Button variant="outline" size="icon" className="h-9 w-9 shrink-0 rounded-full border-danger/40 text-danger" onClick={onAbort} title="停止">
                 <Square size={14} />

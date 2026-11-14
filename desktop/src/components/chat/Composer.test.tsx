@@ -47,54 +47,49 @@ describe("Composer IME guard", () => {
   });
 });
 
-describe("Composer 平台/模型切换器", () => {
+describe("Composer 模型切换器（ModelPicker 胶囊）", () => {
   beforeEach(() => {
     useUiStore.getState().setProfilesPayload(null);
     useAppStore.getState().reset();
   });
 
-  it("渲染平台/模型选择器，改变即写入 store", () => {
+  /** Radix trigger 在 pointerdown 打开菜单，click 仅补全真实交互序列（SessionItem.test 先例） */
+  function openPicker() {
+    const trigger = screen.getByRole("button", { name: "选择模型" });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+  }
+
+  it("胶囊按钮显示当前模型，弹层选模型即写 store（三键）", () => {
     useUiStore.getState().setProfilesPayload(payload);
     useAppStore.getState().setActiveSession("web-1", []);
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    // 默认平台 = 全局默认档 p-1；模型下拉 = 该平台的模型列表
-    const selects = screen.getAllByRole("combobox");
-    expect(selects).toHaveLength(2);
-    expect(selects[0]).toHaveValue("p-1");
-    expect(screen.getByRole("option", { name: "deepseek-chat" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "deepseek-reasoner" })).toBeInTheDocument();
-    // 切平台 → selection 更新且模型回落新平台首个
-    fireEvent.change(selects[0], { target: { value: "p-2" } });
-    expect(useAppStore.getState().selection).toEqual({ profileId: "p-2", model: "glm-4.7" });
-    // 模型下拉随平台切换：现在是 glm-4.7，p-1 的模型不再出现
-    expect(screen.getByRole("option", { name: "glm-4.7" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "deepseek-chat" })).not.toBeInTheDocument();
-    // 切回 p-1 再选 reasoner，验证 model 通道
-    fireEvent.change(selects[0], { target: { value: "p-1" } });
-    fireEvent.change(selects[1], { target: { value: "deepseek-reasoner" } });
-    expect(useAppStore.getState().selection).toEqual({ profileId: "p-1", model: "deepseek-reasoner" });
+    // 默认档 p-1 首模型
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveTextContent("deepseek-chat");
+    openPicker();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "glm-4.7" }));
+    expect(useAppStore.getState().selection).toEqual({ profileId: "p-2", model: "glm-4.7", effort: "off" });
   });
 
   it("目录为空数组时不渲染选择器", () => {
     useUiStore.getState().setProfilesPayload({ profiles: [], defaultProfile: "", defaultModel: "" });
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    expect(screen.queryAllByRole("combobox")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "选择模型" })).not.toBeInTheDocument();
   });
 
   it("目录为 null 时也不渲染选择器", () => {
     useUiStore.getState().setProfilesPayload(null);
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    expect(screen.queryAllByRole("combobox")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "选择模型" })).not.toBeInTheDocument();
   });
 
-  it("当前模型不在列表时插入临时 option，select 不渲染为空白", () => {
+  it("当前模型不在列表时胶囊照常显示该名（显示=实际）", () => {
     // 模拟恢复会话携带的自定义模型（目录里已不存在该模型名）
     useUiStore.getState().setProfilesPayload(payload);
     useAppStore.getState().setActiveSession("web-1", []);
-    useAppStore.getState().setSelection({ profileId: "p-1", model: "custom-x" });
+    useAppStore.getState().setSelection({ profileId: "p-1", model: "custom-x", effort: "off" });
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    expect(screen.getAllByRole("combobox")[1]).toHaveValue("custom-x");
-    expect(screen.getByRole("option", { name: "custom-x" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveTextContent("custom-x");
   });
 
   it("selection 为空时回落所选平台首个模型，不使用全局 defaultModel（显示=实际）", () => {
@@ -102,8 +97,7 @@ describe("Composer 平台/模型切换器", () => {
     useUiStore.getState().setProfilesPayload({ ...payload, defaultModel: "phantom-model" });
     useAppStore.getState().setActiveSession("web-1", []);
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    expect(screen.getAllByRole("combobox")[1]).toHaveValue("deepseek-chat");
-    expect(screen.queryByRole("option", { name: "phantom-model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveTextContent("deepseek-chat");
   });
 });
 
