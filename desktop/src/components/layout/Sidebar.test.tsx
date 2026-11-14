@@ -16,7 +16,7 @@ describe("Sidebar 多项目分组", () => {
   const base = {
     activeId: "t1", projects: [] as string[], booting: null as string | null,
     onSelectTab: vi.fn(), onAddProject: vi.fn(), onOpenProject: vi.fn(),
-    onCloseProject: vi.fn(), onNewSession: vi.fn(),
+    onCloseProject: vi.fn(), onNewSession: vi.fn(), onNewSessionFor: vi.fn(),
   };
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,6 +82,15 @@ describe("Sidebar 多项目分组", () => {
     expect(base.onNewSession).toHaveBeenCalled();
     fireEvent.click(screen.getByLabelText("打开设置"));
     expect(useUiStore.getState().settingsOpen).toBe(true);
+  });
+
+  it("组头 ＋ → onNewSessionFor(该 tab)，且不触发组头选中", () => {
+    const t1 = mkTab("t1", "/w/php-agent", []);
+    const onNewSessionFor = vi.fn();
+    render(<Sidebar {...base} tabs={[t1]} onNewSessionFor={onNewSessionFor} />);
+    fireEvent.click(screen.getByLabelText("在项目 php-agent 下新建会话"));
+    expect(onNewSessionFor).toHaveBeenCalledWith(t1);
+    expect(base.onSelectTab).not.toHaveBeenCalled();
   });
 
   it("版本号响应式更新：status 晚于挂载到达也显示（不再依赖整树重渲染）", () => {

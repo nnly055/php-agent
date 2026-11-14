@@ -48,6 +48,7 @@ export function Sidebar({
   onOpenProject,
   onCloseProject,
   onNewSession,
+  onNewSessionFor,
 }: {
   tabs: SidebarTab[];
   activeId: string | null;
@@ -58,6 +59,7 @@ export function Sidebar({
   onOpenProject: (path: string) => void;
   onCloseProject: (id: string) => void;
   onNewSession: () => void;
+  onNewSessionFor: (tab: SidebarTab) => void;
 }) {
   const [q, setQ] = useState("");
   // 折叠状态按项目路径为键：tab id 会被 sidecar 重启重绑，路径稳定
@@ -90,6 +92,17 @@ export function Sidebar({
         <FolderOpen size={13} className="shrink-0" />
         <span className="min-w-0 flex-1 truncate">{name}</span>
         {booting === tab.path && <span className="animate-pulse text-[11px]">启动中…</span>}
+        <button
+          aria-label={`在项目 ${name} 下新建会话`}
+          className="shrink-0 rounded p-0.5 text-muted opacity-0 transition-opacity hover:text-ink group-hover:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNewSessionFor(tab);
+          }}
+          title="新建会话"
+        >
+          <Plus size={12} />
+        </button>
         <button
           aria-label={`关闭项目 ${name}`}
           className="shrink-0 rounded p-0.5 text-muted opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"

@@ -187,6 +187,11 @@ export default function App() {
             onOpenProject={(p) => openPath(p)}
             onCloseProject={(id) => { const t = tabs.find((x) => x.id === id); if (t) closeTab(t); }}
             onNewSession={() => activeTab.store.getState().setActiveSession(`web-${Date.now().toString(36)}`, [])}
+            onNewSessionFor={(tab) => {
+              // 先切到该项目（挂载其工作区），再在该项目 store 下开新会话
+              setActiveId(tab.id);
+              tab.store.getState().setActiveSession(`web-${Date.now().toString(36)}`, []);
+            }}
           />
         )}
         main={activeTab ? (
