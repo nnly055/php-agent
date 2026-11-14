@@ -367,4 +367,93 @@ final class ServerApiTest extends TestCase
         $messages = $store->load('img');
         self::assertSame('image', $messages[0]['content'][0]['type']);
     }
+
+    // ── 推理强度（/agent effort 链路）────────────────────────────────────
+
+    /** 捕获每次 stream 调用的 options，返回 [stub client, 装配好的 AgentServer] */
+    private function effortServer(InMemorySessionStore $store): array
+    {
+        $captured = [];
+        $stub = new class ($captured) implements \PhpAgent\LLM\LLMClient {
+            public array $calls = [];
+
+            public function __construct(private array &$capturedRef)
+            {
+            }
+
+            public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
+            {
+                $this->calls[] = $options;
+                yield StreamEvent::text('ok');
+                yield StreamEvent::end('end_turn');
+            }
+        };
+        $dir = sys_get_temp_dir() . '/php-agent-srv-' . uniqid();
+        mkdir($dir, 0777, true);
+        file_put_contents($dir . '/.env', "AGENT_PROVIDER=fake\nAGENT_SESSION_STORE=memory\n");
+        $config = Config::load($dir);
+        $profiles = new ProfileRegistry();
+        $profiles->setProfiles([['id' => 'default', 'name' => 'fake', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['fake']]], 'default');
+        $server = new AgentServer(new AgentLoop($stub, new ToolRegistry(), 'sys', 5), $store, [], $dir, $config, $profiles);
+        return [$stub, $server];
+    }
+
+    public function testAgentRejectsUnknownEffort(): void
+    {
+        $s = $this->server();
+        $resp = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => 'hi', 'session_id' => 'x', 'effort' => 'turbo',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(400, $resp->getStatusCode());
+        self::assertStringContainsString('effort', (string) $resp->getBody());
+    }
+
+    public function testAgentExplicitEffortPersists(): void
+    {
+        $store = new InMemorySessionStore();
+        [$stub, $s] = $this->effortServer($store);
+        $r = $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => 'hi', 'session_id' => 'ef', 'effort' => 'high',
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame(200, $r->getStatusCode());
+        Loop::run();
+        self::assertSame(['effort' => 'high'], $stub->calls[0], 'effort 透传 LLM 调用');
+        $meta = array_values(array_filter($store->list(10), static fn ($m) => $m->id === 'ef'))[0];
+        self::assertSame('high', $meta->effort, '显式 effort 落 meta');
+    }
+
+    public function testAgentOmittedEffortFallsBackToMeta(): void
+    {
+        $store = new InMemorySessionStore();
+        [$stub, $s] = $this->effortServer($store);
+        $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => '第一轮', 'session_id' => 'fb', 'effort' => 'high',
+        ], JSON_THROW_ON_ERROR)));
+        Loop::run();
+        self::assertCount(1, $stub->calls);
+
+        // 第二轮不带 effort → 回退该会话 meta 的 high（而非默认 off）
+        $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => '第二轮不带 effort', 'session_id' => 'fb',
+        ], JSON_THROW_ON_ERROR)));
+        Loop::run();
+        self::assertSame(['effort' => 'high'], $stub->calls[1], '未携带 effort 回退会话 meta');
+        $meta = array_values(array_filter($store->list(10), static fn ($m) => $m->id === 'fb'))[0];
+        self::assertSame('high', $meta->effort, '回退轮不改写 meta');
+    }
+
+    public function testAgentEffortOnlySelectionPersists(): void
+    {
+        $store = new InMemorySessionStore();
+        [$stub, $s] = $this->effortServer($store);
+        // 仅显式 effort（无 profile_id/model）：也算显式选择，落盘且不抹其他键
+        $s->handle(new ServerRequest('POST', 'http://localhost/agent', [], json_encode([
+            'message' => 'hi', 'session_id' => 'eo', 'effort' => 'max',
+        ], JSON_THROW_ON_ERROR)));
+        Loop::run();
+        $meta = array_values(array_filter($store->list(10), static fn ($m) => $m->id === 'eo'))[0];
+        self::assertSame('max', $meta->effort);
+        self::assertNull($meta->profileId, 'effort-only 轮不得虚构 profile 选择');
+        self::assertSame(['effort' => 'max'], $stub->calls[0]);
+    }
 }
