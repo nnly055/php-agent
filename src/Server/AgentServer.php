@@ -265,13 +265,11 @@ final class AgentServer
                 if ($broker !== null) {
                     $broker->setEmitter($onEvent);
                 }
-                $final = $this->loop->run($messages, $message, $onEvent, $images, ['effort' => $effort ?? 'off']);
-                $this->store->save($sid, $messages, $selection);
+                $final = $this->loop->run($messages, $message, $onEvent, $images, ['effort' => $effort ?? 'off']);                $this->store->save($sid, $messages, $selection);
                 HookPipeline::fire($this->hooks, 'session_saved', ['sessionId' => $sid]);
                 $stream->write($this->sseFrame(StreamEvent::finalAnswer($final)));
                 $stream->end();
-            } catch (\Throwable $e) {
-                $stream->write($this->sseFrame(StreamEvent::error($e->getMessage())));
+            } catch (\Throwable $e) {                $stream->write($this->sseFrame(StreamEvent::error($e->getMessage())));
                 $stream->end();
             } finally {
                 $broker?->discardActive();

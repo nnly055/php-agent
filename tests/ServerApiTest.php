@@ -7,7 +7,9 @@ namespace PhpAgent\Tests;
 use PhpAgent\Agent\AgentLoop;
 use PhpAgent\Agent\ToolRegistry;
 use PhpAgent\Config;
+use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\LLM\FakeLLMClient;
+use PhpAgent\LLM\StreamEvent;
 use PhpAgent\Server\AgentServer;
 use PhpAgent\Kernel\ProfileRegistry;
 use PhpAgent\Session\Store\InMemorySessionStore;
@@ -374,12 +376,8 @@ final class ServerApiTest extends TestCase
     private function effortServer(InMemorySessionStore $store): array
     {
         $captured = [];
-        $stub = new class ($captured) implements \PhpAgent\LLM\LLMClient {
+        $stub = new class () implements \PhpAgent\LLM\LLMClient {
             public array $calls = [];
-
-            public function __construct(private array &$capturedRef)
-            {
-            }
 
             public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
             {
@@ -388,11 +386,15 @@ final class ServerApiTest extends TestCase
                 yield StreamEvent::end('end_turn');
             }
         };
+        // 关键：registry 的 fake 档经 kernel 工厂解析到捕获 stub——handleAgent 的 setClient
+        // 会用解析结果替换 loop client，stub 必须从「解析链」里来才能被调用到
+        $kernel = new AgentKernel(Config::fromArray(['AGENT_SESSION_STORE' => 'memory']));
+        $kernel->registerProvider('fake', static fn () => $stub);
         $dir = sys_get_temp_dir() . '/php-agent-srv-' . uniqid();
         mkdir($dir, 0777, true);
         file_put_contents($dir . '/.env', "AGENT_PROVIDER=fake\nAGENT_SESSION_STORE=memory\n");
         $config = Config::load($dir);
-        $profiles = new ProfileRegistry();
+        $profiles = new ProfileRegistry($kernel);
         $profiles->setProfiles([['id' => 'default', 'name' => 'fake', 'provider' => 'fake', 'baseUrl' => '', 'apiKey' => '', 'models' => ['fake']]], 'default');
         $server = new AgentServer(new AgentLoop($stub, new ToolRegistry(), 'sys', 5), $store, [], $dir, $config, $profiles);
         return [$stub, $server];
