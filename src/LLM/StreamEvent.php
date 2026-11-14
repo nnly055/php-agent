@@ -9,6 +9,8 @@ namespace PhpAgent\LLM;
  * data 字段按 type 携带不同内容：
  *   text_delta        {text}
  *   thinking_delta    {text}        推理模型（GLM/DeepSeek-R1）的思维链
+ *   thinking_end      {text, signature}  Anthropic 思考块收尾（签名完整才 yield，入史用）
+ *   thinking_redacted {data}        Anthropic 安全过滤块（加密 data，须原样回传）
  *   tool_use_start    {toolId, toolName}
  *   tool_input_delta  {toolId, jsonChunk}
  *   tool_use_end      {toolId, toolName, input}
@@ -32,6 +34,18 @@ final class StreamEvent
     public static function thinking(string $text): self
     {
         return new self('thinking_delta', ['text' => $text]);
+    }
+
+    /** Anthropic 思考块收尾：signature 完整才 yield，AgentLoop 据此把块前置入史 */
+    public static function thinkingEnd(string $text, string $signature): self
+    {
+        return new self('thinking_end', ['text' => $text, 'signature' => $signature]);
+    }
+
+    /** Anthropic 安全过滤块：加密 data 随 content_block_start 完整下发，须原样回传 */
+    public static function thinkingRedacted(string $data): self
+    {
+        return new self('thinking_redacted', ['data' => $data]);
     }
 
     public static function toolStart(string $toolId, string $toolName): self

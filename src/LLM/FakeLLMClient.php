@@ -17,7 +17,7 @@ final class FakeLLMClient implements LLMClient
     {
     }
 
-    public function stream(array $messages, array $tools, string $system): \Generator
+    public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
     {
         $turn = $this->script[$this->turnIndex++]
             ?? [StreamEvent::text('(fake) 演示脚本已播完，配置真实 provider 请编辑 .env。')];

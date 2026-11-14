@@ -18,4 +18,20 @@ final class StreamEventTest extends TestCase
         self::assertSame(['path' => 'a.php'], $e->data['input']);
         self::assertSame('diff-text', $e->data['preview']);
     }
+
+    // ── 推理强度（thinking 块入史）事件 ────────────────────────
+
+    public function testThinkingEndShape(): void
+    {
+        $e = StreamEvent::thinkingEnd('思考文本', 'sig-abc');
+        self::assertSame('thinking_end', $e->type);
+        self::assertSame(['text' => '思考文本', 'signature' => 'sig-abc'], $e->data);
+    }
+
+    public function testThinkingRedactedShape(): void
+    {
+        $e = StreamEvent::thinkingRedacted('encrypted-data');
+        self::assertSame('thinking_redacted', $e->type);
+        self::assertSame(['data' => 'encrypted-data'], $e->data);
+    }
 }

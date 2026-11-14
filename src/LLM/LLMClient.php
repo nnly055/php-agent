@@ -23,6 +23,8 @@ interface LLMClient
      * @param array $messages 归一化消息历史（会被客户端转换成协议格式）
      * @param array $tools    工具规格列表
      * @param string $system  系统提示词
+     * @param array $options  per-request 选项：['effort' => 'off'|'low'|'medium'|'high'|'max']，
+     *                        默认 'off' = 不发任何思考相关字段（现行为）
      */
-    public function stream(array $messages, array $tools, string $system): \Generator;
+    public function stream(array $messages, array $tools, string $system, array $options = []): \Generator;
 }
