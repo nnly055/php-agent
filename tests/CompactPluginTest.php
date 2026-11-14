@@ -10,7 +10,7 @@ use PhpAgent\LLM\FakeLLMClient;
 use PhpAgent\LLM\StreamEvent;
 use PhpAgent\Plugin\Compact\CompactPlugin;
 use PhpAgent\Plugin\Compact\Compactor;
-use PhpAgent\Server\ProfileRegistry;
+use PhpAgent\Kernel\ProfileRegistry;
 use PHPUnit\Framework\TestCase;
 
 // 插件类不经 composer autoload（项目插件由 plugin.php require），测试中显式引入

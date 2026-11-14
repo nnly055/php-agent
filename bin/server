@@ -19,7 +19,7 @@ use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\Kernel\PluginManager;
 use PhpAgent\Server\AgentServer;
 use PhpAgent\Server\ConfirmBroker;
-use PhpAgent\Server\ProfileRegistry;
+use PhpAgent\Kernel\ProfileRegistry;
 use React\EventLoop\Loop;
 use React\Http\HttpServer;
 use React\Http\Message\Response;

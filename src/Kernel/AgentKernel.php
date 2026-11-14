@@ -103,14 +103,14 @@ final class AgentKernel
         return $this->sessionStore ??= new InMemorySessionStore();
     }
 
-    private ?\PhpAgent\Server\ProfileRegistry $profileRegistry = null;
+    private ?\PhpAgent\Kernel\ProfileRegistry $profileRegistry = null;
 
-    public function setProfileRegistry(\PhpAgent\Server\ProfileRegistry $r): void
+    public function setProfileRegistry(\PhpAgent\Kernel\ProfileRegistry $r): void
     {
         $this->profileRegistry = $r;
     }
 
-    public function profileRegistry(): ?\PhpAgent\Server\ProfileRegistry
+    public function profileRegistry(): ?\PhpAgent\Kernel\ProfileRegistry
     {
         return $this->profileRegistry;
     }
