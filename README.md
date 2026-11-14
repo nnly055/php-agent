@@ -63,6 +63,7 @@ php bin/server
 | `/reset` | 清空当前会话历史 |
 | `/mcp` | 查看 MCP server 状态与工具清单 |
 | `/model` | 查看/切换模型（`/model [profile [model]]`，会话内下一条消息生效，见下节） |
+| `/effort` | 查看/设置思考强度（`/effort [off|low|medium|high|max]`，下一条消息生效，见下节） |
 | `/exit` | 退出（Ctrl+D 同效） |
 
 会话在每轮任务结束后自动保存；CLI 重进 `/resume` 续聊，server 重启不丢会话。
@@ -117,13 +118,18 @@ AGENT_DEFAULT_PROFILE=glm     # 可选，缺省 = 首档
 
 - `/model` 列目录（`✓` 标当前生效）；`/model claude claude-sonnet-4-5` 切换；按会话
   持久化（`/resume` 恢复后自动重绑；`/new` 回到默认档）
+- `/effort [off|low|medium|high|max]` 思考强度：openai 兼容端映射 `reasoning_effort`
+  （最高→high），anthropic 映射 `thinking.budget_tokens`（≈2k/8k/16k/32k，max_tokens 自动
+  抬到 budget+1024）；默认 off 不发任何字段（现行为不变）；thinking 块随会话历史归一化
+  保存并按协议回放/剥离（openai 端自动剥离）。不兼容端点显式选强度时透传上游报错，
+  关掉即可；Anthropic 模型间切换后开思考可能因签名校验报错，`/effort off` 可恢复
 - **跨协议无缝**：历史以归一化块结构存储，OpenAI 兼容 ↔ Anthropic 原生互回放经线上
   格式测试钉住（tool_use/tool_result 配对、system 位置、tool id 透传）；切到不支持
   图像的模型时历史中的图片会由上游报错，属预期
 - 模型条目支持字符串或对象形态（对象可带 `contextTokens`/`maxTokens`，未设时继承
   全局 `AGENT_MAX_TOKENS`/compact 阈值跟随全局 `AGENT_CONTEXT_TOKENS`）
 - 配置错误启动即失败并指明条目；桌面壳侧的模型目录走 desktop.json（`/config/profiles`），
-  与 CLI 各自独立
+  与 CLI 各自独立；桌面在 Composer 底行的模型弹层内切换模型与思考强度
 
 ## 插件系统
 
@@ -263,7 +269,7 @@ Rust 2 个测试覆盖：端口行解析、sidecar 真实启动/停止生命周�
 ```bash
 curl -N -X POST http://127.0.0.1:8091/agent \
   -H 'Content-Type: application/json' \
-  -d '{"message": "列出当前目录", "session_id": "web-1"}'
+  -d '{"message": "列出当前目录", "session_id": "web-1", "effort": "high"}'
 ```
 
 返回 `text/event-stream`，每帧 `data: {"type": "...", "data": {...}}`，

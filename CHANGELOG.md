@@ -9,6 +9,24 @@
 
 ### 新增
 
+- **桌面模型切换器（胶囊 + 弹层）× 推理强度控制（全栈）**
+  - Composer 底行换装：原生双 select → 单胶囊按钮 + Radix 弹层——按档分组列模型
+    （provider 小标、aria-current 标当前）、思考强度五档分段、底部「管理模型…」进设置；
+    恢复会话/被删档的临时项兜底语义保留
+  - 推理强度五档 `off|low|medium|high|max`（默认 off 不发任何字段，现行为零变化）：
+    openai 兼容端 → `reasoning_effort`（max→high）；anthropic → `thinking.budget_tokens`
+    （≈2k/8k/16k/32k，max_tokens 不足自动抬到 budget+1024）
+  - 方案 A（thinking 块入史）：归一化历史新增 `thinking`/`redacted_thinking` 块（前置），
+    Anthropic 回放、openai 端剥离——解决「extended thinking + 工具循环必须回传思考块」
+    的协议硬约束；AnthropicClient 补 `thinking_delta` 逐字透传与 `thinking_end`
+    （签名完整才入史）、`thinking_redacted` 解析
+  - 全链路：`LLMClient::stream` 可选 `$options`（effort per-request，不换 client）；
+    `/agent` body `effort` 三级回退（请求→meta→off）；SessionMeta.effort 持久化
+    （四 store 覆盖语义改 array_key_exists，显式 null 即权威）；CLI `/effort` 命令；
+    桌面选择随会话保存/恢复（显示=实际）
+  - 已知边界：GLM/DeepSeek 等不兼容端点显式选强度时透传上游报错；Anthropic 模型间
+    切换后开思考可能因签名校验报错（`/effort off` 可恢复），文档已写明
+
 - **会话内切换模型（内核 + CLI）**
   - `ProfileRegistry` 下沉 `PhpAgent\Kernel`（server 侧行为不变）；`configFor` 条目未指定
     `maxTokens` 时继承全局 `AGENT_MAX_TOKENS`（CLI 启动 client 改经 registry 后全局值不丢）
