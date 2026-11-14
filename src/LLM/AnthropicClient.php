@@ -12,16 +12,29 @@ use PhpAgent\Config;
  */
 final class AnthropicClient extends BaseSseClient
 {
+    /** 推理强度 → thinking budget_tokens（max_tokens 不足时自动抬至 budget+1024） */
+    private const EFFORT_BUDGET = ['low' => 2048, 'medium' => 8192, 'high' => 16384, 'max' => 32768];
+
     public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
     {
+        $effort = (string) ($options['effort'] ?? 'off');
+        $budget = self::EFFORT_BUDGET[$effort] ?? null;
+        $maxTokens = $this->config->maxTokens();
         $body = [
             'model' => $this->config->model(),
-            'max_tokens' => $this->config->maxTokens(),
+            'max_tokens' => $maxTokens,
             'stream' => true,
             'system' => $system,
-            'messages' => $this->mapMessages($messages),
+            'messages' => $this->mapMessages($messages, $effort),
             'tools' => $tools, // 内部格式即 Anthropic 形态，直接透传
         ];
+        if ($budget !== null) {
+            $body['thinking'] = ['type' => 'enabled', 'budget_tokens' => $budget];
+            // budget 必须小于 max_tokens：不足则抬高（per-request 覆盖，不动 Config）
+            if ($maxTokens <= $budget) {
+                $body['max_tokens'] = $budget + 1024;
+            }
+        }
 
         $url = $this->config->baseUrl() . '/v1/messages';
         $headers = [
@@ -29,11 +42,13 @@ final class AnthropicClient extends BaseSseClient
             'anthropic-version: 2023-06-01',
         ];
 
-        // index → 块状态（text / tool）
+        // index → 块状态（text / tool / thinking）
         $blockKind = [];
         $blockId = [];
         $blockName = [];
         $blockJson = [];
+        $blockThinking = [];
+        $blockSignature = [];
 
         $stream = $this->postSse($url, $headers, $body);
 
@@ -50,13 +65,20 @@ final class AnthropicClient extends BaseSseClient
 
                     case 'content_block_start':
                         $cb = $j['content_block'] ?? [];
+                        $idx = $j['index'];
                         if (($cb['type'] ?? '') === 'tool_use') {
-                            $idx = $j['index'];
                             $blockKind[$idx] = 'tool';
                             $blockId[$idx] = $cb['id'];
                             $blockName[$idx] = $cb['name'];
                             $blockJson[$idx] = '';
                             yield StreamEvent::toolStart((string) $cb['id'], (string) $cb['name']);
+                        } elseif (($cb['type'] ?? '') === 'thinking') {
+                            $blockKind[$idx] = 'thinking';
+                            $blockThinking[$idx] = '';
+                            $blockSignature[$idx] = '';
+                        } elseif (($cb['type'] ?? '') === 'redacted_thinking') {
+                            // 加密思考块：data 随 start 完整下发，无 delta 流，须原样回传
+                            yield StreamEvent::thinkingRedacted((string) ($cb['data'] ?? ''));
                         }
                         break;
 
@@ -69,6 +91,12 @@ final class AnthropicClient extends BaseSseClient
                             $chunk = (string) ($delta['partial_json'] ?? '');
                             $blockJson[$idx] .= $chunk;
                             yield StreamEvent::toolInputDelta($blockId[$idx], $chunk);
+                        } elseif (($delta['type'] ?? '') === 'thinking_delta' && ($blockKind[$idx] ?? '') === 'thinking') {
+                            $chunk = (string) ($delta['thinking'] ?? '');
+                            $blockThinking[$idx] .= $chunk;
+                            yield StreamEvent::thinking($chunk);
+                        } elseif (($delta['type'] ?? '') === 'signature_delta' && ($blockKind[$idx] ?? '') === 'thinking') {
+                            $blockSignature[$idx] .= (string) ($delta['signature'] ?? '');
                         }
                         break;
 
@@ -79,6 +107,12 @@ final class AnthropicClient extends BaseSseClient
                             $input = is_array($input) ? $input : [];
                             yield StreamEvent::toolEnd($blockId[$idx], $blockName[$idx], $input);
                             unset($blockKind[$idx], $blockId[$idx], $blockName[$idx], $blockJson[$idx]);
+                        } elseif (($blockKind[$idx] ?? '') === 'thinking') {
+                            // 签名完整才发 thinking_end：AgentLoop 只把带签名块入史（无签名回放必 400）
+                            if ($blockSignature[$idx] !== '') {
+                                yield StreamEvent::thinkingEnd($blockThinking[$idx], $blockSignature[$idx]);
+                            }
+                            unset($blockKind[$idx], $blockThinking[$idx], $blockSignature[$idx]);
                         }
                         break;
 
@@ -106,7 +140,7 @@ final class AnthropicClient extends BaseSseClient
     }
 
     /** 归一化消息 → Anthropic Messages 协议（内部格式与其对齐，主要做清理） */
-    private function mapMessages(array $messages): array
+    private function mapMessages(array $messages, string $effort = 'off'): array
     {
         $out = [];
         foreach ($messages as $msg) {
@@ -136,6 +170,25 @@ final class AnthropicClient extends BaseSseClient
                             'tool_use_id' => $block['tool_use_id'],
                             'content' => (string) $block['content'],
                         ];
+                        break;
+                    case 'thinking':
+                    case 'redacted_thinking':
+                        // 本轮开 thinking 才回放（off 时带旧块不合法，剥离）；
+                        // thinking 块必须签名完整（无签名回放必 400，如 openai 端产出的无签名思考）
+                        if ($effort === 'off') {
+                            break;
+                        }
+                        if ($block['type'] === 'thinking') {
+                            if ((string) ($block['signature'] ?? '') === '') {
+                                break;
+                            }
+                            $blocks[] = ['type' => 'thinking', 'thinking' => (string) $block['thinking'], 'signature' => (string) $block['signature']];
+                        } else {
+                            if ((string) ($block['data'] ?? '') === '') {
+                                break;
+                            }
+                            $blocks[] = ['type' => 'redacted_thinking', 'data' => (string) $block['data']];
+                        }
                         break;
                 }
             }

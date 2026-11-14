@@ -355,4 +355,100 @@ final class HttpTransportTest extends TestCase
         self::assertCount(1, $blocks);
         self::assertSame('tool_result', $blocks[0]['type']);
     }
+
+    // ── 推理强度（thinking 块入史）：请求映射、流解析、历史回放/剥离 ────────
+
+    private const THINKING_FIXTURE = __DIR__ . '/fixtures/llm/fake-anthropic-thinking-server.php';
+
+    /** 带 options 消费 Anthropic 流，返回 [事件列表, 捕获的请求体] */
+    private function consumeAnthropicWith(array $messages, array $options): array
+    {
+        $capture = (string) tempnam(sys_get_temp_dir(), 'php-agent-body-');
+        $port = $this->startServer(self::THINKING_FIXTURE, ['LLM_CAPTURE_FILE' => $capture]);
+        $client = new AnthropicClient(Config::fromArray([
+            'AGENT_PROVIDER' => 'anthropic',
+            'AGENT_API_KEY' => 'sk-test',
+            'AGENT_MODEL' => 'test-model',
+            'AGENT_BASE_URL' => "http://127.0.0.1:{$port}",
+        ]));
+        $events = [];
+        foreach ($client->stream($messages, [], 'sys', $options) as $event) {
+            $events[] = $event;
+        }
+        $body = json_decode((string) file_get_contents($capture), true);
+        unlink($capture);
+        return [$events, $body];
+    }
+
+    private function effortOptions(string $effort): array
+    {
+        return ['effort' => $effort];
+    }
+
+    public function testAnthropicEffortHighSendsBudgetAndRespectsMaxTokens(): void
+    {
+        [, $body] = $this->consumeAnthropicWith([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], $this->effortOptions('high'));
+        self::assertSame(['type' => 'enabled', 'budget_tokens' => 16384], $body['thinking']);
+        // 默认 max_tokens 8192 ≤ budget → 必须抬到 budget+1024，否则 Anthropic 拒收
+        self::assertSame(17408, $body['max_tokens']);
+    }
+
+    public function testAnthropicEffortMaxBudgetAndLift(): void
+    {
+        [, $body] = $this->consumeAnthropicWith([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], $this->effortOptions('max'));
+        self::assertSame(['type' => 'enabled', 'budget_tokens' => 32768], $body['thinking']);
+        self::assertSame(33792, $body['max_tokens']);
+    }
+
+    public function testAnthropicEffortOffSendsNoThinking(): void
+    {
+        [, $body] = $this->consumeAnthropicWith([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], $this->effortOptions('off'));
+        self::assertArrayNotHasKey('thinking', $body);
+        self::assertSame(8192, $body['max_tokens'], 'off 时不抬 max_tokens（现行为不变）');
+    }
+
+    /** 历史残留块样例（上一轮带签名思考 + 安全过滤块） */
+    private function historyWithThinkingBlocks(): array
+    {
+        return [
+            ['role' => 'assistant', 'content' => [
+                ['type' => 'thinking', 'thinking' => '上一轮思考', 'signature' => 'sig-old'],
+                ['type' => 'redacted_thinking', 'data' => 'enc-old'],
+                ['type' => 'text', 'text' => '上一轮回答'],
+            ]],
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => '继续']]],
+        ];
+    }
+
+    public function testAnthropicOffStripsThinkingBlocks(): void
+    {
+        // off 时历史残留块同样不合法（Anthropic 要求无 thinking 参数的请求不带块）→ 剥离
+        [, $body] = $this->consumeAnthropicWith($this->historyWithThinkingBlocks(), $this->effortOptions('off'));
+        foreach ($body['messages'][0]['content'] as $block) {
+            self::assertNotSame('thinking', $block['type']);
+            self::assertNotSame('redacted_thinking', $block['type']);
+        }
+        self::assertSame('text', $body['messages'][0]['content'][0]['type']);
+        self::assertArrayNotHasKey('thinking', $body);
+    }
+
+    public function testAnthropicHighReplaysThinkingBlocksFirst(): void
+    {
+        [, $body] = $this->consumeAnthropicWith($this->historyWithThinkingBlocks(), $this->effortOptions('high'));
+        $blocks = $body['messages'][0]['content'];
+        self::assertSame(['type' => 'thinking', 'thinking' => '上一轮思考', 'signature' => 'sig-old'], $blocks[0], 'thinking 块前置回放');
+        self::assertSame(['type' => 'redacted_thinking', 'data' => 'enc-old'], $blocks[1]);
+        self::assertSame('text', $blocks[2]['type']);
+        self::assertSame(['type' => 'enabled', 'budget_tokens' => 16384], $body['thinking']);
+    }
+
+    public function testAnthropicThinkingStreamEmitsEndAndRedacted(): void
+    {
+        [$events,] = $this->consumeAnthropicWith([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], $this->effortOptions('high'));
+        $kinds = array_map(static fn ($e) => $e->type, $events);
+        self::assertContains('thinking_delta', $kinds);
+        self::assertContains('thinking_redacted', $kinds);
+        $endIdx = (int) array_search('thinking_end', $kinds, true);
+        self::assertSame(['text' => '思考A思考B', 'signature' => 'sig-123'], $events[$endIdx]->data);
+    }
 }
