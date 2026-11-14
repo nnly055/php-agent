@@ -62,6 +62,7 @@ php bin/server
 | `/new` | 开启新会话 |
 | `/reset` | 清空当前会话历史 |
 | `/mcp` | 查看 MCP server 状态与工具清单 |
+| `/model` | 查看/切换模型（`/model [profile [model]]`，会话内下一条消息生效，见下节） |
 | `/exit` | 退出（Ctrl+D 同效） |
 
 会话在每轮任务结束后自动保存；CLI 重进 `/resume` 续聊，server 重启不丢会话。
@@ -102,6 +103,27 @@ token 为保守估算（字符数 ÷ 2.5，无 tokenizer）；压缩就地修改
 停用：重命名 plugins/compact/plugin.php 为
 plugin.php.disabled。该插件同时是 `before_llm_request` 钩子
 （引用裁剪历史）+ `/compact` 命令双扩展点的参考实现。
+
+### 会话内切换模型（CLI）
+
+`.env` 里用 `AGENT_PROFILES` 定义多档模型目录（多平台 × 每平台多模型），即可在
+会话中途用 `/model` 切换，**下一条消息即用新模型**，历史无缝延续：
+
+```bash
+AGENT_PROFILES='[{"id":"glm","name":"智谱","provider":"openai","baseUrl":"https://open.bigmodel.cn/api/paas/v4","apiKey":"sk-...","models":["glm-4.6","glm-4.5-air"]},
+                 {"id":"claude","name":"Anthropic","provider":"anthropic","baseUrl":"https://api.anthropic.com","apiKey":"sk-...","models":[{"name":"claude-sonnet-4-5","contextTokens":200000}]}]'
+AGENT_DEFAULT_PROFILE=glm     # 可选，缺省 = 首档
+```
+
+- `/model` 列目录（`✓` 标当前生效）；`/model claude claude-sonnet-4-5` 切换；按会话
+  持久化（`/resume` 恢复后自动重绑；`/new` 回到默认档）
+- **跨协议无缝**：历史以归一化块结构存储，OpenAI 兼容 ↔ Anthropic 原生互回放经线上
+  格式测试钉住（tool_use/tool_result 配对、system 位置、tool id 透传）；切到不支持
+  图像的模型时历史中的图片会由上游报错，属预期
+- 模型条目支持字符串或对象形态（对象可带 `contextTokens`/`maxTokens`，未设时继承
+  全局 `AGENT_MAX_TOKENS`/compact 阈值跟随全局 `AGENT_CONTEXT_TOKENS`）
+- 配置错误启动即失败并指明条目；桌面壳侧的模型目录走 desktop.json（`/config/profiles`），
+  与 CLI 各自独立
 
 ## 插件系统
 
