@@ -88,6 +88,19 @@ describe("useAgentStream.answerConfirm", () => {
       expect.any(String), "未选发送", expect.any(String), expect.any(AbortSignal), { profileId: null, model: null, effort: "off" }, undefined,
     );
   });
+
+  it("新会话 effort-only 选择不因重置而静默丢失（终审 Important #1）", async () => {
+    // 只选强度不选档：setActiveSession 重置后必须恢复（守卫含 effort），
+    // 否则首条消息后菜单静默回落 off、meta 被改写
+    (api.agentStream as any).mockImplementationOnce(async function* () {});
+    useAppStore.getState().setSelection({ profileId: null, model: null, effort: "max" });
+    const { result } = renderHook(() => useAgentStream());
+    await act(async () => { await result.current.send("只调强度"); });
+    expect(api.agentStream).toHaveBeenLastCalledWith(
+      expect.any(String), "只调强度", expect.any(String), expect.any(AbortSignal), { profileId: null, model: null, effort: "max" }, undefined,
+    );
+    expect(useAppStore.getState().selection).toEqual({ profileId: null, model: null, effort: "max" });
+  });
 });
 
 describe("useAgentStream.send images 透传", () => {

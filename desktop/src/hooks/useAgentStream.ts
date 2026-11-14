@@ -12,8 +12,10 @@ export function useAgentStream() {
     const sessionId = st.activeSession || `web-${Date.now().toString(36)}`;
     if (!st.activeSession) {
       store.getState().setActiveSession(sessionId);
-      // setActiveSession 会重置选择：新会话不丢用户发送前已选的档/模型（空则保持重置态=继承默认档）
-      if (st.selection.profileId || st.selection.model) {
+      // setActiveSession 会重置选择：新会话不丢用户发送前已选的档/模型/强度
+      //（全空则保持重置态=继承默认档）。effort 单独选择（不选档）也必须保留，
+      // 否则首条消息后菜单静默回落 off、meta 被改写——「显示=实际」断裂
+      if (st.selection.profileId || st.selection.model || st.selection.effort !== "off") {
         store.getState().setSelection(st.selection);
       }
     }
