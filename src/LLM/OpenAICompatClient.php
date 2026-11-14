@@ -12,7 +12,7 @@ use PhpAgent\Config;
  */
 final class OpenAICompatClient extends BaseSseClient
 {
-    public function stream(array $messages, array $tools, string $system): \Generator
+    public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
     {
         $body = [
             'model' => $this->config->model(),

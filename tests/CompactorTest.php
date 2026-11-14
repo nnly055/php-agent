@@ -131,7 +131,7 @@ final class CompactorTest extends TestCase
     public function testCompactFailureKeepsHistoryIntact(): void
     {
         $boom = new class implements \PhpAgent\LLM\LLMClient {
-            public function stream(array $messages, array $tools, string $system): \Generator
+            public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
             {
                 throw new \RuntimeException('网络断了');
                 yield; // 生成器语法占位
@@ -168,7 +168,7 @@ final class CompactorTest extends TestCase
     {
         // FakeLLM 脚本播完后的兜底文本会返回内容，这里用只 yield 非文本事件的客户端
         $silent = new class implements \PhpAgent\LLM\LLMClient {
-            public function stream(array $messages, array $tools, string $system): \Generator
+            public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
             {
                 yield StreamEvent::end('end_turn');
             }
