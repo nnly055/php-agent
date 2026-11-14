@@ -31,7 +31,7 @@ final class SessionModelRebinder
             }
             if ($m->profileId !== null && $m->profileId !== '') {
                 try {
-                    $loop->setClient($registry->resolve($m->profileId, $m->model));
+                    $registry->bind($loop, $m->profileId, $m->model);
                     return $registry->resolvedSelection();
                 } catch (\InvalidArgumentException) {
                     // 会话存的 profile 已被删：回落默认档（保持旧会话可用）
@@ -39,7 +39,7 @@ final class SessionModelRebinder
             }
             break; // 找到会话但无有效选择 → 落到默认档
         }
-        $loop->setClient($registry->resolve(null, null));
+        $registry->bind($loop, null, null);
         return null;
     }
 }

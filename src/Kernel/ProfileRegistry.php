@@ -194,6 +194,19 @@ final class ProfileRegistry
         ];
     }
 
+    /**
+     * 解析并绑定生效 client：loop 替换 + activeClient 记录（compact 跟随用）。
+     * loop 绑定与 activeClient 记录必须同源，否则 CLI 侧压缩会发到旧 provider——
+     * 三个绑定点（bin/agent 启动、/model、SessionModelRebinder）都走这里，防再度分叉。
+     */
+    public function bind(\PhpAgent\Agent\AgentLoop $loop, ?string $profileId = null, ?string $model = null): LLMClient
+    {
+        $client = $this->resolve($profileId, $model);
+        $this->setActiveClient($client);
+        $loop->setClient($client);
+        return $client;
+    }
+
     /** 当前对话生效模型的 contextTokens（压缩跟随用）；未解析或未设置 → null */
     public function activeContextTokens(): ?int
     {

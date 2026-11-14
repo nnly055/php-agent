@@ -104,6 +104,7 @@ final class ModelCommandTest extends TestCase
         $out = $this->kernel->command('model')->execute(['cl', 'claude-sonnet-4-5'], $this->ctx);
         self::assertSame(['profileId' => 'cl', 'model' => 'claude-sonnet-4-5'], $this->ctx->selection);
         self::assertNotSame($startClient, $this->kernel->loop()->client(), 'setClient 生效');
+        self::assertSame($this->kernel->loop()->client(), $this->kernel->profileRegistry()->activeClient(), 'compact 跟随当前生效模型');
         self::assertStringContainsString('anthropic', $out);
         self::assertStringContainsString('回放', $out); // 跨协议提示（openai → anthropic）
     }

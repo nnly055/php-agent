@@ -89,6 +89,7 @@ $loop = new AgentLoop(
     $config->maxIterations(),
     $kernel->hooks() // 钩子快照：内置插件（审计）+ ConfirmHook
 );
+$registry->setActiveClient($client); // compact 跟随当前生效模型（与 server 侧 /agent 接线同源）
 $kernel->setLoop($loop);
 
 $ui->banner($fake);
@@ -142,8 +143,9 @@ while (true) {
         }
 
         // 会话切换钩子（/resume、/new 统一生效）：按新会话 meta 重绑模型——
-        // 有选择 → 恢复该选择；无选择/记录档已删 → 回落默认档（与桌面「新对话 = 默认模型」一致）
-        if ($sessionId !== $lastSessionId) {
+        // 有选择 → 恢复该选择；无选择/记录档已删 → 回落默认档（与桌面「新对话 = 默认模型」一致）。
+        // /resume 恢复到启动同 id 的会话（启动提示直接 /resume 的常见路径）id 不变，必须按命令名触发
+        if ($sessionId !== $lastSessionId || $name === 'resume') {
             $lastSessionId = $sessionId;
             $selection = SessionModelRebinder::rebind($registry, $loop, $sessionId, $store);
             $modelDesc = $selection !== null

@@ -63,6 +63,18 @@ final class SessionModelRebinderTest extends TestCase
         self::assertSame($default, $this->loop->client());
     }
 
+    public function testRebindRecordsActiveClientForCompactFollow(): void
+    {
+        // compact 插件读 profileRegistry()->activeClient() 作为压缩摘要 client——
+        // rebind 绑定 loop 的同时必须记录 activeClient，否则 CLI 侧压缩不跟随当前模型
+        $msgs = [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]];
+        $this->store->save('s1', $msgs, ['profileId' => 'glm', 'model' => 'glm-4.6']);
+        $expected = $this->registry->resolve('glm', 'glm-4.6');
+
+        SessionModelRebinder::rebind($this->registry, $this->loop, 's1', $this->store);
+        self::assertSame($expected, $this->registry->activeClient());
+    }
+
     public function testRebindReturnsNullWhenNoChoice(): void
     {
         // 会话已存在但从未选择（save 无 selection）

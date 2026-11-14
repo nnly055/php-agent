@@ -179,13 +179,12 @@ final class CommandsPlugin implements Plugin
 
                 $prevProvider = $this->providerOf($registry, $ctx->selection);
                 try {
-                    $client = $registry->resolve($profileId, $model);
+                    $registry->bind($ctx->kernel()->loop(), $profileId, $model);
                     $sel = $registry->resolvedSelection()
                         ?? ['profileId' => $profileId, 'model' => (string) $model]; // 防御：目录态必有 resolvedSelection
                 } catch (\InvalidArgumentException $e) {
                     return '✗ ' . $e->getMessage();
                 }
-                $ctx->kernel()->loop()->setClient($client);
                 $ctx->selection = $sel;
 
                 $newProvider = $this->providerOf($registry, $sel);
