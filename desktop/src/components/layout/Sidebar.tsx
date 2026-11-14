@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { useStore } from "zustand";
 import type { ProjectStore } from "../../store/createProjectStore";
-import { ProjectProvider, useProjectStore } from "../../store/useProjectStore";
+import { ProjectProvider, useProjectStore, getDefaultProjectStore } from "../../store/useProjectStore";
 import { ScrollArea } from "../ui/scroll-area";
 import { SessionList } from "../sessions/SessionList";
 import { ChevronDown, ChevronRight, FolderOpen, Plus, Search, Settings, X } from "lucide-react";
@@ -17,6 +18,24 @@ function GroupSessions({ onActivate, q }: { onActivate: () => void; q: string })
   const sessions = store((s) => s.sessions);
   const filtered = sessions.filter((s) => s.title.toLowerCase().includes(q.toLowerCase()));
   return <SessionList sessions={filtered} onActivate={onActivate} />;
+}
+
+/** 侧栏底部：版本号 + 设置入口。版本经 useStore 订阅激活项目 store（status 由 refresh 异步填充）。 */
+function SidebarFooter({ store }: { store: ProjectStore | null }) {
+  const version = useStore(store ?? getDefaultProjectStore(), (s) => s.status?.version);
+  return (
+    <div className="flex items-center border-t border-border px-3 py-2">
+      <span className="font-mono text-[11px] text-muted">v{version ?? ""}</span>
+      <button
+        aria-label="打开设置"
+        className="ml-auto rounded p-0.5 text-muted transition-colors hover:bg-elevated hover:text-ink"
+        onClick={() => useUiStore.getState().setSettingsOpen(true)}
+        title="配置 API"
+      >
+        <Settings size={14} />
+      </button>
+    </div>
+  );
 }
 
 export function Sidebar({
@@ -43,8 +62,7 @@ export function Sidebar({
   const [q, setQ] = useState("");
   // 折叠状态按项目路径为键：tab id 会被 sidecar 重启重绑，路径稳定
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  // 版本是构建期常量，非响应式读取激活项目 store 即可，不订阅
-  const version = tabs.find((t) => t.id === activeId)?.store.getState().status?.version;
+  const activeStore = tabs.find((t) => t.id === activeId)?.store ?? null;
   const unopened = projects.filter((p) => !tabs.some((t) => t.path === p));
 
   const groupHeader = (tab: SidebarTab) => {
@@ -148,17 +166,7 @@ export function Sidebar({
           </button>
         ))}
       </ScrollArea>
-      <div className="flex items-center border-t border-border px-3 py-2">
-        <span className="font-mono text-[11px] text-muted">v{version ?? ""}</span>
-        <button
-          aria-label="打开设置"
-          className="ml-auto rounded p-0.5 text-muted transition-colors hover:bg-elevated hover:text-ink"
-          onClick={() => useUiStore.getState().setSettingsOpen(true)}
-          title="配置 API"
-        >
-          <Settings size={14} />
-        </button>
-      </div>
+      <SidebarFooter store={activeStore} />
     </aside>
   );
 }

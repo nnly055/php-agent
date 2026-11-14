@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { Sidebar } from "./Sidebar";
 import { createProjectStore } from "../../store/createProjectStore";
 import { useUiStore } from "../../store/useUiStore";
@@ -82,5 +82,18 @@ describe("Sidebar 多项目分组", () => {
     expect(base.onNewSession).toHaveBeenCalled();
     fireEvent.click(screen.getByLabelText("打开设置"));
     expect(useUiStore.getState().settingsOpen).toBe(true);
+  });
+
+  it("版本号响应式更新：status 晚于挂载到达也显示（不再依赖整树重渲染）", () => {
+    const store = createProjectStore();
+    render(<Sidebar {...base} tabs={[{ id: "t1", path: "/w/php-agent", store }]} />);
+    expect(screen.getByText("v")).toBeInTheDocument();
+    act(() =>
+      store.getState().setStatus({
+        provider: "openai", model: "gpt-4o", workspace: "/w/php-agent", permissions: "ask",
+        sessionStore: "json", mcp: true, version: "0.9.9", maxIterations: 25,
+      })
+    );
+    expect(screen.getByText("v0.9.9")).toBeInTheDocument();
   });
 });

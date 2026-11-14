@@ -3,7 +3,7 @@ import { AppShell } from "./components/layout/AppShell";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { SessionHeader } from "./components/layout/SessionHeader";
 import { Sidebar } from "./components/layout/Sidebar";
-import { EmptyProjects } from "./components/layout/EmptyProjects";
+import { EmptyProjects, BootScreen } from "./components/layout/EmptyProjects";
 import { ChatView } from "./components/chat/ChatView";
 import { ProjectProvider } from "./store/useProjectStore";
 import { createProjectStore, type ProjectStore } from "./store/createProjectStore";
@@ -202,7 +202,7 @@ export default function App() {
             onConfigure={() => useUiStore.getState().setSettingsOpen(true)}
           />
         ) : (
-          <div className="grid h-full place-items-center animate-pulse font-mono text-sm text-muted">正在启动…</div>
+          <BootScreen />
         )}
       />
       <SettingsDialog
