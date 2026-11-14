@@ -130,4 +130,53 @@ final class ConfigTest extends TestCase
         self::assertSame('https://api.openai.com/v1', $c->baseUrl());
         self::assertSame('', $c->model());
     }
+
+    // ── AGENT_PROFILES：CLI 多档模型目录（会话内切换） ──────────────────────
+
+    public function testProfilesParsesValidJson(): void
+    {
+        $raw = '[{"id":"glm","provider":"openai","baseUrl":"https://x/v4","apiKey":"k","models":["glm-4.6"]},'
+            . '{"id":"cl","provider":"anthropic","models":[{"name":"claude-sonnet-4-5","contextTokens":200000}]}]';
+        $p = Config::fromArray(['AGENT_PROFILES' => $raw])->profiles();
+        self::assertCount(2, $p);
+        self::assertSame('glm', $p[0]['id']);
+        self::assertSame('openai', $p[0]['provider']);
+        // models 条目的对象形态原样透传（归一化是 ProfileRegistry::setProfiles 的职责）
+        self::assertSame(['name' => 'claude-sonnet-4-5', 'contextTokens' => 200000], $p[1]['models'][0]);
+    }
+
+    public function testProfilesEmptyWhenUnsetOrBlank(): void
+    {
+        self::assertSame([], Config::fromArray([])->profiles());
+        self::assertSame([], Config::fromArray(['AGENT_PROFILES' => ''])->profiles());
+        self::assertSame([], Config::fromArray(['AGENT_PROFILES' => '  '])->profiles());
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function providerBadProfiles(): array
+    {
+        return [
+            '非法 JSON' => ['{bad'],
+            '顶层不是 list' => ['{"id":"glm"}'],
+            '缺 id' => ['[{"provider":"openai","models":["m"]}]'],
+            '空 id' => ['[{"id":"","provider":"openai","models":["m"]}]'],
+            'provider 越界' => ['[{"id":"glm","provider":"grpc","models":["m"]}]'],
+            '缺 models' => ['[{"id":"glm","provider":"openai"}]'],
+            'models 空数组' => ['[{"id":"glm","provider":"openai","models":[]}]'],
+            'models 非数组' => ['[{"id":"glm","provider":"openai","models":"glm-4.6"}]'],
+        ];
+    }
+
+    /** @dataProvider providerBadProfiles */
+    public function testProfilesRejectsBadConfig(string $raw): void
+    {
+        $this->expectException(\RuntimeException::class);
+        Config::fromArray(['AGENT_PROFILES' => $raw])->profiles();
+    }
+
+    public function testDefaultProfileId(): void
+    {
+        self::assertSame('', Config::fromArray([])->defaultProfileId());
+        self::assertSame('glm', Config::fromArray(['AGENT_DEFAULT_PROFILE' => ' glm '])->defaultProfileId());
+    }
 }

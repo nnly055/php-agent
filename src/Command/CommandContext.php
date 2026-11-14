@@ -7,7 +7,8 @@ namespace PhpAgent\Command;
 use PhpAgent\Kernel\AgentKernel;
 
 /**
- * 命令执行上下文：messages / sessionId 以引用持有，命令可直接切换当前会话。
+ * 命令执行上下文：messages / sessionId / selection 以引用持有，
+ * 命令可直接切换当前会话或改写当前会话的模型选择。
  */
 final class CommandContext
 {
@@ -15,6 +16,7 @@ final class CommandContext
         private readonly AgentKernel $kernel,
         public array &$messages,
         public string &$sessionId,
+        public ?array &$selection, // null = 本会话未做 /model 选择（沿用全局默认档）
     ) {
     }
 

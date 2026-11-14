@@ -9,7 +9,7 @@ use PhpAgent\Agent\ToolRegistry;
 use PhpAgent\Config;
 use PhpAgent\LLM\FakeLLMClient;
 use PhpAgent\Server\AgentServer;
-use PhpAgent\Server\ProfileRegistry;
+use PhpAgent\Kernel\ProfileRegistry;
 use PhpAgent\Session\Store\InMemorySessionStore;
 use PHPUnit\Framework\TestCase;
 use React\EventLoop\Loop;

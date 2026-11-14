@@ -19,6 +19,8 @@ use PhpAgent\Hook\HookPipeline;
 use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\Kernel\PluginManager;
 use PhpAgent\Kernel\PluginScaffolder;
+use PhpAgent\Kernel\ProfileRegistry;
+use PhpAgent\Kernel\SessionModelRebinder;
 use PhpAgent\Ui\ConsoleUi;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -59,7 +61,27 @@ if (!$fake && $config->permissions() === 'ask') {
     ));
 }
 
-$client = $kernel->provider($fake ? 'fake' : $config->provider());
+// ── 模型目录装配：AGENT_PROFILES 多档（会话内 /model 切换）；未配置 → 单 default 档 ──
+$registry = new ProfileRegistry($kernel);
+if ($fake) {
+    // 离线演示不解析 profiles：单 fake 档，/model 可见但无切换余地（resolve 委托 kernel fake 工厂）
+    $registry->setProfiles([['id' => 'default', 'name' => 'fake', 'provider' => 'fake',
+        'baseUrl' => '', 'apiKey' => '', 'models' => ['fake']]], 'default');
+    $client = $kernel->provider('fake');
+} else {
+    $catalog = $config->profiles();
+    if ($catalog === []) {
+        // 单配置模式（现行为）：合成 default 档；configFor 全局兜底保证请求与直取 kernel provider 一致
+        $registry->setProfiles([['id' => 'default', 'name' => $config->provider(),
+            'provider' => $config->provider(), 'baseUrl' => $config->baseUrl(),
+            'apiKey' => $config->apiKey(), 'models' => [$config->model() ?: '']]], 'default');
+    } else {
+        $registry->setProfiles($catalog, $config->defaultProfileId() ?: (string) ($catalog[0]['id'] ?? ''));
+    }
+    $client = $registry->resolve(null, null); // 默认档
+}
+$kernel->setProfileRegistry($registry);
+
 $loop = new AgentLoop(
     $client,
     $kernel->toolRegistry(),
@@ -67,15 +89,19 @@ $loop = new AgentLoop(
     $config->maxIterations(),
     $kernel->hooks() // 钩子快照：内置插件（审计）+ ConfirmHook
 );
+$registry->setActiveClient($client); // compact 跟随当前生效模型（与 server 侧 /agent 接线同源）
+$kernel->setLoop($loop);
 
 $ui->banner($fake);
 
 // ── 会话状态 ────────────────────────────────────────────────
 $store = $kernel->sessionStore();
 $sessionId = $config->sessionId();
+$lastSessionId = $sessionId;
 $messages = [];
+$selection = null; // 当前会话的模型选择 ['profileId','model']；null = 未选择（save 传 null 保留既有 meta）
 
-if (!$fake && $config->model() === '') {
+if (!$fake && $config->profiles() === [] && $config->model() === '') {
     fwrite(STDERR, "⚠ 未配置 AGENT_MODEL，请在 .env 里设置（参考 .env.example）\n");
 }
 
@@ -111,18 +137,30 @@ while (true) {
         try {
             $argStr = trim((string) ($parts[1] ?? ''));
             $args = $argStr === '' ? [] : (preg_split('/\s+/', $argStr) ?: []);
-            $ui->info($cmd->execute($args, new CommandContext($kernel, $messages, $sessionId)));
+            $ui->info($cmd->execute($args, new CommandContext($kernel, $messages, $sessionId, $selection)));
         } catch (\Throwable $e) {
             $ui->error($e->getMessage());
+        }
+
+        // 会话切换钩子（/resume、/new 统一生效）：按新会话 meta 重绑模型——
+        // 有选择 → 恢复该选择；无选择/记录档已删 → 回落默认档（与桌面「新对话 = 默认模型」一致）。
+        // /resume 恢复到启动同 id 的会话（启动提示直接 /resume 的常见路径）id 不变，必须按命令名触发
+        if ($sessionId !== $lastSessionId || $name === 'resume') {
+            $lastSessionId = $sessionId;
+            $selection = SessionModelRebinder::rebind($registry, $loop, $sessionId, $store);
+            $modelDesc = $selection !== null
+                ? "{$selection['profileId']} / {$selection['model']}"
+                : '默认档';
+            $ui->info("当前模型: {$modelDesc}");
         }
         continue;
     }
 
-    // 正常任务：跑 agent 循环，成功后整段保存会话
+    // 正常任务：跑 agent 循环，成功后整段保存会话（含模型选择；null = 保留既有 meta）
     $snapshot = $messages;
     try {
         $loop->run($messages, $line, $ui->handleEvent(...));
-        $store->save($sessionId, $messages);
+        $store->save($sessionId, $messages, $selection);
         HookPipeline::fire($kernel->hooks(), 'session_saved', ['sessionId' => $sessionId]);
     } catch (\Throwable $e) {
         $messages = $snapshot; // 回滚本轮，避免历史里残留半条消息

@@ -5,8 +5,8 @@ namespace PhpAgent\Tests;
 
 use PhpAgent\Config;
 use PhpAgent\Kernel\AgentKernel;
+use PhpAgent\Kernel\ProfileRegistry;
 use PhpAgent\LLM\LLMClient;
-use PhpAgent\Server\ProfileRegistry;
 use PHPUnit\Framework\TestCase;
 
 final class ProfileRegistryTest extends TestCase
@@ -203,5 +203,66 @@ final class ProfileRegistryTest extends TestCase
         self::assertNull($r->activeClient());
         $r->setActiveClient($r->resolve(null, null));
         self::assertInstanceOf(LLMClient::class, $r->activeClient());
+    }
+
+    // ── 会话内切换（CLI）：resolvedSelection + configFor 全局 maxTokens 兜底 ──
+
+    public function testResolvedSelectionFollowsExplicitResolve(): void
+    {
+        $r = new ProfileRegistry($this->kernel());
+        $r->setProfiles($this->profiles(), 'p-1');
+        $r->resolve('p-2', null); // 未指定模型 → 回落首个模型名
+        self::assertSame(['profileId' => 'p-2', 'model' => 'glm-4.7'], $r->resolvedSelection());
+        $r->resolve('p-1', 'deepseek-reasoner');
+        self::assertSame(['profileId' => 'p-1', 'model' => 'deepseek-reasoner'], $r->resolvedSelection());
+    }
+
+    public function testResolvedSelectionNullOnKernelFallback(): void
+    {
+        // 未配置 profiles → kernel 回退路径无目录选择，selection 必须为 null
+        // （否则未做过 /model 选择的会话会被写脏 meta）
+        $r = new ProfileRegistry($this->kernel());
+        $r->resolve(null, null);
+        self::assertNull($r->resolvedSelection());
+    }
+
+    /** configFor 是 resolve 的私有映射；经反射读客户端 Config 断言继承语义（线上字节级由 wire 矩阵钉住） */
+    private function clientConfig(LLMClient $client): Config
+    {
+        $prop = (new \ReflectionClass($client))->getProperty('config');
+        return $prop->getValue($client);
+    }
+
+    public function testConfigForInheritsGlobalMaxTokens(): void
+    {
+        // 回归点：CLI 启动 client 改经 registry 后，.env 显式 AGENT_MAX_TOKENS 不得被静默丢掉
+        $k = new AgentKernel(Config::fromArray(['AGENT_PROVIDER' => 'openai', 'AGENT_MAX_TOKENS' => '16384', 'AGENT_SESSION_STORE' => 'memory']));
+        $r = new ProfileRegistry($k);
+        $p = [['id' => 'p', 'name' => 'X', 'provider' => 'openai', 'baseUrl' => 'https://x', 'apiKey' => 'sk', 'models' => ['m1']]];
+        $r->setProfiles($p, 'p');
+        $cfg = $this->clientConfig($r->resolve('p', 'm1'));
+        self::assertSame(16384, $cfg->maxTokens());
+        self::assertTrue($cfg->maxTokensExplicit(), '继承的全局 maxTokens 必须保持 explicit 语义（openai 端才发 max_tokens）');
+    }
+
+    public function testConfigForEntryExplicitMaxTokensWins(): void
+    {
+        $k = new AgentKernel(Config::fromArray(['AGENT_PROVIDER' => 'openai', 'AGENT_MAX_TOKENS' => '16384', 'AGENT_SESSION_STORE' => 'memory']));
+        $r = new ProfileRegistry($k);
+        $p = [['id' => 'p', 'name' => 'X', 'provider' => 'openai', 'baseUrl' => 'https://x', 'apiKey' => 'sk', 'models' => [['name' => 'm1', 'maxTokens' => 4096]]]];
+        $r->setProfiles($p, 'p');
+        $cfg = $this->clientConfig($r->resolve('p', 'm1'));
+        self::assertSame(4096, $cfg->maxTokens());
+    }
+
+    public function testConfigForKeepsImplicitMaxTokensWhenGlobalUnset(): void
+    {
+        // 全局未设 AGENT_MAX_TOKENS → 不发 max_tokens（openai 兼容端现行为不变）
+        $k = new AgentKernel(Config::fromArray(['AGENT_PROVIDER' => 'openai', 'AGENT_SESSION_STORE' => 'memory']));
+        $r = new ProfileRegistry($k);
+        $p = [['id' => 'p', 'name' => 'X', 'provider' => 'openai', 'baseUrl' => 'https://x', 'apiKey' => 'sk', 'models' => ['m1']]];
+        $r->setProfiles($p, 'p');
+        $cfg = $this->clientConfig($r->resolve('p', 'm1'));
+        self::assertFalse($cfg->maxTokensExplicit());
     }
 }

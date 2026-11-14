@@ -247,4 +247,112 @@ final class HttpTransportTest extends TestCase
         self::assertSame('tool', $body['messages'][2]['role']);
         self::assertSame('out', $body['messages'][2]['content']);
     }
+
+    // ── 跨协议回放矩阵：会话内切换模型，A 协议产出的历史回放到 B 协议端点 ──────
+
+    /** 捕获 anthropic 夹具收到的请求体 */
+    private function captureAnthropic(array $messages): array
+    {
+        $capture = (string) tempnam(sys_get_temp_dir(), 'php-agent-body-');
+        $client = $this->anthropicClient($capture);
+        foreach ($client->stream($messages, [], '你是助手') as $event) { }
+        $body = json_decode((string) file_get_contents($capture), true);
+        unlink($capture);
+        return $body;
+    }
+
+    /** 捕获 openai 兼容夹具收到的请求体 */
+    private function captureOpenAi(array $messages): array
+    {
+        $capture = (string) tempnam(sys_get_temp_dir(), 'php-agent-body-');
+        $client = $this->openAiClient($capture);
+        foreach ($client->stream($messages, [], '你是助手') as $event) { }
+        $body = json_decode((string) file_get_contents($capture), true);
+        unlink($capture);
+        return $body;
+    }
+
+    public function testOpenAiProducedHistoryReplaysToAnthropic(): void
+    {
+        // OpenAI 客户端产出的归一化历史：assistant 仅 tool_use 块（call_* id）+ tool_result user 消息
+        $body = $this->captureAnthropic([
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => '列出目录']]],
+            ['role' => 'assistant', 'content' => [['type' => 'tool_use', 'id' => 'call_0', 'name' => 'list_dir', 'input' => ['path' => '.']]]],
+            ['role' => 'user', 'content' => [['type' => 'tool_result', 'tool_use_id' => 'call_0', 'content' => 'a.txt']]],
+        ]);
+        $msgs = $body['messages'];
+        self::assertSame('列出目录', $msgs[0]['content'][0]['text']);
+        $use = $msgs[1]['content'][0];
+        self::assertSame('tool_use', $use['type']);
+        self::assertSame('call_0', $use['id'], 'tool id 原样透传不重写');
+        $result = $msgs[2]['content'][0];
+        self::assertSame('tool_result', $result['type']);
+        self::assertSame('call_0', $result['tool_use_id'], 'tool_result 与前一 assistant 的 tool_use 配对');
+        // Anthropic 拒收空 text 块：全部 content 无空 text
+        foreach ($msgs as $m) {
+            foreach ($m['content'] as $b) {
+                if (($b['type'] ?? '') === 'text') {
+                    self::assertNotSame('', trim((string) $b['text']));
+                }
+            }
+        }
+        self::assertSame('你是助手', $body['system'], 'system 在顶层字段');
+    }
+
+    public function testAnthropicProducedHistoryReplaysToOpenAi(): void
+    {
+        // Anthropic 客户端产出的归一化历史：text+tool_use 混合块（toolu_* id）+ tool_result user 消息
+        $body = $this->captureOpenAi([
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => '列出目录']]],
+            ['role' => 'assistant', 'content' => [
+                ['type' => 'text', 'text' => '我来看一下'],
+                ['type' => 'tool_use', 'id' => 'toolu_1', 'name' => 'list_dir', 'input' => ['path' => '.']],
+            ]],
+            ['role' => 'user', 'content' => [['type' => 'tool_result', 'tool_use_id' => 'toolu_1', 'content' => 'a.txt']]],
+        ]);
+        $msgs = $body['messages'];
+        self::assertSame('system', $msgs[0]['role'], 'system 为首条 system 消息');
+        $asst = $msgs[2];
+        self::assertSame('assistant', $asst['role']);
+        self::assertSame('我来看一下', $asst['content'], '文本与 tool_calls 并存时 content 为文本串');
+        self::assertSame('toolu_1', $asst['tool_calls'][0]['id'], 'tool id 原样透传不重写');
+        self::assertSame('list_dir', $asst['tool_calls'][0]['function']['name']);
+        self::assertSame(['path' => '.'], json_decode((string) $asst['tool_calls'][0]['function']['arguments'], true), 'arguments 是合法 JSON 串');
+        $tool = $msgs[3];
+        self::assertSame('tool', $tool['role'], 'tool_result → role:tool 紧随该 assistant');
+        self::assertSame('toolu_1', $tool['tool_call_id']);
+        self::assertSame('a.txt', $tool['content']);
+    }
+
+    public function testEmptyAssistantMessageDroppedByBothClients(): void
+    {
+        // 边界：归一化历史里的 assistant 空 content 数组（流结束但无内容的历史残留）→ 两客户端均整条跳过
+        $anthropic = $this->captureAnthropic([
+            ['role' => 'assistant', 'content' => []],
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => '继续']]],
+        ]);
+        self::assertCount(1, $anthropic['messages']);
+        self::assertSame('继续', $anthropic['messages'][0]['content'][0]['text']);
+
+        $openai = $this->captureOpenAi([
+            ['role' => 'assistant', 'content' => []],
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => '继续']]],
+        ]);
+        self::assertCount(2, $openai['messages']); // [0]=system，[1]=user「继续」
+        self::assertSame('继续', $openai['messages'][1]['content']);
+    }
+
+    public function testWhitespaceOnlyTextBlockDroppedByAnthropic(): void
+    {
+        // 边界：仅空白的 text 块 → Anthropic 拒收空 text，映射时丢弃（该消息只剩 tool_result 时不出现坏块）
+        $body = $this->captureAnthropic([
+            ['role' => 'user', 'content' => [
+                ['type' => 'tool_result', 'tool_use_id' => 'call_9', 'content' => 'ok'],
+                ['type' => 'text', 'text' => '   '],
+            ]],
+        ]);
+        $blocks = $body['messages'][0]['content'];
+        self::assertCount(1, $blocks);
+        self::assertSame('tool_result', $blocks[0]['type']);
+    }
 }

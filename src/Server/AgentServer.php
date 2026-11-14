@@ -7,6 +7,7 @@ namespace PhpAgent\Server;
 use PhpAgent\Agent\AgentLoop;
 use PhpAgent\Config;
 use PhpAgent\Hook\HookPipeline;
+use PhpAgent\Kernel\ProfileRegistry;
 use PhpAgent\LLM\AnthropicClient;
 use PhpAgent\LLM\OpenAICompatClient;
 use PhpAgent\LLM\StreamEvent;

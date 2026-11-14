@@ -151,5 +151,93 @@ final class CommandsPlugin implements Plugin
                 return "✓ 新会话 {$id} 已开启（旧会话已自动保存，/sessions 查看）";
             }
         });
+
+        // 会话内切换模型：目录来自 ProfileRegistry（CLI 装配自 AGENT_PROFILES）。
+        // 切换 per-turn 生效——setClient 立即替换，下一条消息即用新模型；选择写穿 ctx->selection
+        // 由主循环随 save 落盘。/model 与 /compact 一样为 CLI 专属（server 无命令分发）。
+        $kernel->registerCommand('model', new class implements Command {
+            public function description(): string
+            {
+                return '查看/切换模型（/model [profile [model]]）';
+            }
+
+            public function execute(array $args, CommandContext $ctx): string
+            {
+                $registry = $ctx->kernel()->profileRegistry();
+                if ($registry === null) {
+                    return '✗ 模型目录不可用（profileRegistry 未装配）';
+                }
+                if ($args === []) {
+                    return $this->renderCatalog($registry, $ctx);
+                }
+
+                $profileId = trim((string) $args[0]);
+                if ($profileId === '') {
+                    return '✗ profile id 不能为空';
+                }
+                $model = isset($args[1]) && trim((string) $args[1]) !== '' ? trim((string) $args[1]) : null;
+
+                $prevProvider = $this->providerOf($registry, $ctx->selection);
+                try {
+                    $registry->bind($ctx->kernel()->loop(), $profileId, $model);
+                    $sel = $registry->resolvedSelection()
+                        ?? ['profileId' => $profileId, 'model' => (string) $model]; // 防御：目录态必有 resolvedSelection
+                } catch (\InvalidArgumentException $e) {
+                    return '✗ ' . $e->getMessage();
+                }
+                $ctx->selection = $sel;
+
+                $newProvider = $this->providerOf($registry, $sel);
+                $protocol = $newProvider === 'anthropic' ? 'anthropic 原生' : ($newProvider === 'fake' ? 'fake（离线）' : 'openai 兼容');
+                $hint = ($prevProvider !== null && $prevProvider !== $newProvider && $newProvider !== 'fake')
+                    ? "，历史将回放到新协议（{$newProvider}）"
+                    : '';
+                return "✓ 已切换到 {$sel['profileId']} / {$sel['model']}（{$protocol}）{$hint}";
+            }
+
+            /** @param array{id:string,name?:string,provider:string,models:array<int,array{name:string}>|array<int,string>} ... 目录条目 */
+            private function renderCatalog(\PhpAgent\Kernel\ProfileRegistry $registry, CommandContext $ctx): string
+            {
+                $cat = $registry->profiles();
+                $profiles = is_array($cat['profiles'] ?? null) ? $cat['profiles'] : [];
+                if ($profiles === []) {
+                    return '（模型目录为空：.env 配置 AGENT_PROFILES 启用会话内切换）';
+                }
+                $default = (string) ($cat['defaultProfile'] ?? '');
+                $sel = $ctx->selection;
+                $lines = ['可用模型:'];
+                foreach ($profiles as $p) {
+                    $pid = (string) ($p['id'] ?? '');
+                    $provider = (string) ($p['provider'] ?? '');
+                    $protocol = $provider === 'anthropic' ? 'anthropic 原生' : ($provider === 'fake' ? 'fake（离线）' : 'openai 兼容');
+                    $models = array_map(
+                        static fn ($m) => is_array($m) ? (string) ($m['name'] ?? '') : (string) $m,
+                        is_array($p['models'] ?? null) ? $p['models'] : []
+                    );
+                    // ✓ = 当前会话生效（显式选择匹配；未选择 → 默认档首个模型）
+                    $active = $sel !== null
+                        ? ($sel['profileId'] === $pid)
+                        : ($pid === $default);
+                    $mark = $active ? '✓' : ' ';
+                    $lines[] = sprintf('  %s %-12s %-14s (%s)  %s', $mark, $pid, (string) ($p['name'] ?? ''), $protocol, implode(', ', $models));
+                }
+                $lines[] = '切换: /model <profile> [model]（下一条消息生效）';
+                return implode("\n", $lines);
+            }
+
+            /** selection 或默认档指向的 provider；未知 → null */
+            private function providerOf(\PhpAgent\Kernel\ProfileRegistry $registry, ?array $sel): ?string
+            {
+                $cat = $registry->profiles();
+                $profiles = is_array($cat['profiles'] ?? null) ? $cat['profiles'] : [];
+                $pid = $sel['profileId'] ?? (string) ($cat['defaultProfile'] ?? '');
+                foreach ($profiles as $p) {
+                    if ((string) ($p['id'] ?? '') === $pid) {
+                        return (string) ($p['provider'] ?? '');
+                    }
+                }
+                return null;
+            }
+        });
     }
 }

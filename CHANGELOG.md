@@ -9,6 +9,20 @@
 
 ### 新增
 
+- **会话内切换模型（内核 + CLI）**
+  - `ProfileRegistry` 下沉 `PhpAgent\Kernel`（server 侧行为不变）；`configFor` 条目未指定
+    `maxTokens` 时继承全局 `AGENT_MAX_TOKENS`（CLI 启动 client 改经 registry 后全局值不丢）
+  - CLI `.env` 多档目录：`AGENT_PROFILES`（JSON，models 支持字符串/对象形态）+
+    `AGENT_DEFAULT_PROFILE`（缺省首档）；配置错误启动即失败并指明条目
+  - `/model` 命令：列出目录（✓ 标当前生效）、`/model <profile> [model]` 切换（下一条消息
+    生效），选择随会话 save 持久化（复用 SessionMeta.profileId/model 与 store selection 契约）
+  - 会话切换重绑：`SessionModelRebinder` 按 meta 恢复选择（/resume），/new 回落默认档
+    （与桌面「新对话 = 默认模型」一致），profile 已删自动回落并提示
+  - 跨协议回放兼容测试矩阵：openai 兼容 ↔ anthropic 原生产出历史互回放的线上格式断言
+    （tool_use/tool_result 配对、system 位置、tool id 透传、空 assistant/空白 text 块丢弃）
+  - 扩展点：`AgentKernel::setLoop/loop()`、`CommandContext` 引用字段 `$selection`、
+    `AgentLoop::client()`、`ProfileRegistry::resolvedSelection()`
+
 - **MCP 配置管理（桌面设置入口）**
   - 设置对话框新增「MCP」Tab：可视化管理全局（`~/.php-agent/mcp.json`，新文件）与
     项目（`<workspace>/.mcp.json`）两层 MCP server（stdio：command/args/env；

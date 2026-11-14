@@ -79,7 +79,8 @@ final class McpPluginTest extends TestCase
         // CommandContext 的 messages/sessionId 是引用参数，不能传字面量，先落变量
         $messages = [];
         $sessionId = 't';
-        $out = $cmd->execute([], new CommandContext($kernel, $messages, $sessionId));
+        $selection = null;
+        $out = $cmd->execute([], new CommandContext($kernel, $messages, $sessionId, $selection));
         self::assertStringContainsString('fake', $out);
         self::assertStringContainsString('stdio', $out);
         self::assertStringContainsString('echo', $out);
@@ -128,7 +129,8 @@ final class McpPluginTest extends TestCase
         // CommandContext 的 messages/sessionId 是引用参数，不能传字面量，先落变量
         $messages = [];
         $sessionId = 't';
-        $out = $kernel->command('mcp')->execute([], new CommandContext($kernel, $messages, $sessionId));
+        $selection = null;
+        $out = $kernel->command('mcp')->execute([], new CommandContext($kernel, $messages, $sessionId, $selection));
         self::assertStringContainsString('连接失败', $out);
     }
 
@@ -147,7 +149,8 @@ final class McpPluginTest extends TestCase
         // CommandContext 的 messages/sessionId 是引用参数，不能传字面量，先落变量
         $messages = [];
         $sessionId = 't';
-        $out = $kernel->command('mcp')->execute([], new CommandContext($kernel, $messages, $sessionId));
+        $selection = null;
+        $out = $kernel->command('mcp')->execute([], new CommandContext($kernel, $messages, $sessionId, $selection));
         self::assertStringContainsString('bad', $out);
         self::assertStringContainsString('配置无效', $out);
         self::assertStringContainsString('command 与 url 必须二选一', $out);

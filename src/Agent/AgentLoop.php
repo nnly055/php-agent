@@ -310,4 +310,10 @@ final class AgentLoop
     {
         $this->client = $client;
     }
+
+    /** 当前生效 client（测试与切换命令断言用） */
+    public function client(): LLMClient
+    {
+        return $this->client;
+    }
 }

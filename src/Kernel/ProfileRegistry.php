@@ -2,10 +2,9 @@
 
 declare(strict_types=1);
 
-namespace PhpAgent\Server;
+namespace PhpAgent\Kernel;
 
 use PhpAgent\Config;
-use PhpAgent\Kernel\AgentKernel;
 use PhpAgent\LLM\AnthropicClient;
 use PhpAgent\LLM\FakeLLMClient;
 use PhpAgent\LLM\LLMClient;
@@ -173,8 +172,39 @@ final class ProfileRegistry
         }
         if (isset($entry['maxTokens']) && $entry['maxTokens'] > 0) {
             $env['AGENT_MAX_TOKENS'] = (string) $entry['maxTokens'];
+        } elseif ($this->kernel?->config()->maxTokensExplicit()) {
+            // 全局兜底：条目未指定 maxTokens 时继承 .env 的 AGENT_MAX_TOKENS——CLI 启动 client
+            // 改经 registry 解析后，显式全局值不得被静默丢掉（Anthropic 少发 max_tokens、
+            // openai 兼容端 maxTokensExplicit 失效）。contextTokens 不在此继承：线上请求不可见，
+            // compact 阈值已有 activeContextTokens() ?? 全局 的回退链
+            $env['AGENT_MAX_TOKENS'] = (string) $this->kernel->config()->maxTokens();
         }
         return Config::fromArray($env);
+    }
+
+    /** 最近一次 resolve 的目录选择（profileId + 生效模型名）；kernel 回退路径（无 profiles）→ null */
+    public function resolvedSelection(): ?array
+    {
+        if ($this->lastResolved === []) {
+            return null;
+        }
+        return [
+            'profileId' => (string) $this->lastResolved['profile']['id'],
+            'model' => (string) $this->lastResolved['modelName'],
+        ];
+    }
+
+    /**
+     * 解析并绑定生效 client：loop 替换 + activeClient 记录（compact 跟随用）。
+     * loop 绑定与 activeClient 记录必须同源，否则 CLI 侧压缩会发到旧 provider——
+     * 三个绑定点（bin/agent 启动、/model、SessionModelRebinder）都走这里，防再度分叉。
+     */
+    public function bind(\PhpAgent\Agent\AgentLoop $loop, ?string $profileId = null, ?string $model = null): LLMClient
+    {
+        $client = $this->resolve($profileId, $model);
+        $this->setActiveClient($client);
+        $loop->setClient($client);
+        return $client;
     }
 
     /** 当前对话生效模型的 contextTokens（压缩跟随用）；未解析或未设置 → null */

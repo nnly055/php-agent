@@ -10,7 +10,7 @@ use PhpAgent\LLM\FakeLLMClient;
 use PhpAgent\LLM\StreamEvent;
 use PhpAgent\Plugin\Compact\CompactPlugin;
 use PhpAgent\Plugin\Compact\Compactor;
-use PhpAgent\Server\ProfileRegistry;
+use PhpAgent\Kernel\ProfileRegistry;
 use PHPUnit\Framework\TestCase;
 
 // 插件类不经 composer autoload（项目插件由 plugin.php require），测试中显式引入
@@ -149,8 +149,9 @@ final class CompactPluginTest extends TestCase
             ->register($kernel);
 
         $sessionId = 's-test';
+        $selection = null;
         $messages = $this->bigHistory();
-        $ctx = new \PhpAgent\Command\CommandContext($kernel, $messages, $sessionId);
+        $ctx = new \PhpAgent\Command\CommandContext($kernel, $messages, $sessionId, $selection);
         $cmd = $kernel->command('compact');
         self::assertNotNull($cmd);
 
@@ -168,11 +169,12 @@ final class CompactPluginTest extends TestCase
             ->register($kernel);
 
         $sessionId = 's-test';
+        $selection = null;
         $messages = [
             ['role' => 'user', 'content' => [['type' => 'text', 'text' => '唯一任务']]],
             ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => '完成']]],
         ];
-        $ctx = new \PhpAgent\Command\CommandContext($kernel, $messages, $sessionId);
+        $ctx = new \PhpAgent\Command\CommandContext($kernel, $messages, $sessionId, $selection);
         $out = $kernel->command('compact')->execute([], $ctx);
         self::assertStringContainsString('无需压缩', $out);
         self::assertCount(2, $messages);

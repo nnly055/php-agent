@@ -103,16 +103,29 @@ final class AgentKernel
         return $this->sessionStore ??= new InMemorySessionStore();
     }
 
-    private ?\PhpAgent\Server\ProfileRegistry $profileRegistry = null;
+    private ?\PhpAgent\Kernel\ProfileRegistry $profileRegistry = null;
 
-    public function setProfileRegistry(\PhpAgent\Server\ProfileRegistry $r): void
+    public function setProfileRegistry(\PhpAgent\Kernel\ProfileRegistry $r): void
     {
         $this->profileRegistry = $r;
     }
 
-    public function profileRegistry(): ?\PhpAgent\Server\ProfileRegistry
+    public function profileRegistry(): ?\PhpAgent\Kernel\ProfileRegistry
     {
         return $this->profileRegistry;
+    }
+
+    private ?\PhpAgent\Agent\AgentLoop $loop = null;
+
+    /** 装配后注册运行中的 agent 循环（/model 等切换类命令经此触达 setClient） */
+    public function setLoop(\PhpAgent\Agent\AgentLoop $loop): void
+    {
+        $this->loop = $loop;
+    }
+
+    public function loop(): \PhpAgent\Agent\AgentLoop
+    {
+        return $this->loop ?? throw new \RuntimeException('AgentLoop 未注册（入口装配后需 setLoop）');
     }
 
     public function addHook(AgentHook $hook): void
