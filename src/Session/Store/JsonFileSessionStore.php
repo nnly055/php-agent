@@ -60,8 +60,10 @@ final class JsonFileSessionStore implements SessionStore
             (int) ($old['meta']['createdAt'] ?? time()),
             time(),
             count($messages),
-            $sel['profileId'] ?? ($old['meta']['profileId'] ?? null),
-            $sel['model'] ?? ($old['meta']['model'] ?? null),
+            // selection 键存在即权威（含显式 null）：?? 会把显式 null 当缺失，抹掉已存选择
+            array_key_exists('profileId', $sel) ? $sel['profileId'] : ($old['meta']['profileId'] ?? null),
+            array_key_exists('model', $sel) ? $sel['model'] : ($old['meta']['model'] ?? null),
+            array_key_exists('effort', $sel) ? $sel['effort'] : ($old['meta']['effort'] ?? null),
         );
         $payload = ['schemaVersion' => 1, 'meta' => $meta->toArray(), 'messages' => $messages];
         $tmp = $file . '.tmp.' . uniqid();
