@@ -225,4 +225,47 @@ final class Config
     {
         return trim($this->env['AGENT_COMPACT_PROVIDER'] ?? '');
     }
+
+    // ── 会话内切换模型（CLI 多档目录）────────────────────────
+
+    /**
+     * AGENT_PROFILES：多档模型目录 JSON（CLI 会话内 /model 切换的目录来源）。
+     * 空或未设 → []（单配置模式，现行为不变）；配置错 → RuntimeException 启动即失败——
+     * 手写配置错了应当响亮报错，不做静默降级。
+     * 条目其余字段与 models 的字符串/对象形态不在此校验，原样透传（归一化是
+     * ProfileRegistry::setProfiles 的职责）。
+     *
+     * @return array<int, array{id:string,name?:string,provider:string,baseUrl?:string,apiKey?:string,models:array}>
+     */
+    public function profiles(): array
+    {
+        $raw = trim($this->env['AGENT_PROFILES'] ?? '');
+        if ($raw === '') {
+            return [];
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded) || !array_is_list($decoded)) {
+            throw new \RuntimeException('AGENT_PROFILES 不是合法的 JSON 数组（顶层必须为条目列表）');
+        }
+        foreach ($decoded as $i => $p) {
+            $id = is_array($p) ? trim((string) ($p['id'] ?? '')) : '';
+            if ($id === '') {
+                throw new \RuntimeException("AGENT_PROFILES 条目 #{$i} 缺少非空 id");
+            }
+            $provider = strtolower(trim((string) ($p['provider'] ?? '')));
+            if (!in_array($provider, ['openai', 'anthropic', 'fake'], true)) {
+                throw new \RuntimeException("AGENT_PROFILES 条目 {$id} 的 provider 必须是 openai|anthropic|fake，收到 {$provider}");
+            }
+            if (!isset($p['models']) || !is_array($p['models']) || $p['models'] === []) {
+                throw new \RuntimeException("AGENT_PROFILES 条目 {$id} 的 models 必须是非空数组（CLI 手写配置空列表没有意义）");
+            }
+        }
+        return $decoded;
+    }
+
+    /** 默认档 id（AGENT_DEFAULT_PROFILE）；未设 → ''（装配层回落 AGENT_PROFILES 首档） */
+    public function defaultProfileId(): string
+    {
+        return trim($this->env['AGENT_DEFAULT_PROFILE'] ?? '');
+    }
 }
