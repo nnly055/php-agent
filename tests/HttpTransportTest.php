@@ -451,4 +451,49 @@ final class HttpTransportTest extends TestCase
         $endIdx = (int) array_search('thinking_end', $kinds, true);
         self::assertSame(['text' => '思考A思考B', 'signature' => 'sig-123'], $events[$endIdx]->data);
     }
+
+    // ── openai 兼容端：reasoning_effort 映射 + thinking 块剥离契约 ──────────
+
+    private function captureOpenAiWith(array $messages, array $options): array
+    {
+        $capture = (string) tempnam(sys_get_temp_dir(), 'php-agent-body-');
+        $port = $this->startServer(self::LLM_FIXTURE, ['LLM_CAPTURE_FILE' => $capture]);
+        $client = new OpenAICompatClient(Config::fromArray([
+            'AGENT_PROVIDER' => 'openai',
+            'AGENT_API_KEY' => 'sk-test',
+            'AGENT_MODEL' => 'test-model',
+            'AGENT_BASE_URL' => "http://127.0.0.1:{$port}",
+        ]));
+        foreach ($client->stream($messages, [], 'sys', $options) as $event) { }
+        $body = json_decode((string) file_get_contents($capture), true);
+        unlink($capture);
+        return $body;
+    }
+
+    public function testOpenAiEffortMaxMapsToHigh(): void
+    {
+        $body = $this->captureOpenAiWith([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], $this->effortOptions('max'));
+        self::assertSame('high', $body['reasoning_effort']);
+    }
+
+    public function testOpenAiEffortLowPassesThrough(): void
+    {
+        $body = $this->captureOpenAiWith([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], $this->effortOptions('low'));
+        self::assertSame('low', $body['reasoning_effort']);
+    }
+
+    public function testOpenAiEffortOffOmitsField(): void
+    {
+        $body = $this->captureOpenAiWith([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]], $this->effortOptions('off'));
+        self::assertArrayNotHasKey('reasoning_effort', $body);
+    }
+
+    public function testOpenAiStripsThinkingBlocks(): void
+    {
+        // 跨协议回放：anthropic 产出的 thinking/redacted 块对 openai 端无意义 → 剥离，其余块照常
+        $body = $this->captureOpenAiWith($this->historyWithThinkingBlocks(), $this->effortOptions('off'));
+        $asst = $body['messages'][1];
+        self::assertSame('上一轮回答', $asst['content'], 'thinking 块剥离后只剩文本');
+        self::assertArrayNotHasKey('reasoning_effort', $body);
+    }
 }

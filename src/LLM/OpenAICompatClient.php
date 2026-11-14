@@ -36,6 +36,14 @@ final class OpenAICompatClient extends BaseSseClient
             $body['max_tokens'] = $this->config->maxTokens();
         }
 
+        // 推理强度：显式选择才发送（off = 不发，现行为不变）；max 收敛到 high（OpenAI 词表无 max）。
+        // 历史中的 thinking/redacted 块由 mapMessages 天然剥离（未知块类型被忽略）
+        $effort = (string) ($options['effort'] ?? 'off');
+        $mapped = ['low' => 'low', 'medium' => 'medium', 'high' => 'high', 'max' => 'high'][$effort] ?? null;
+        if ($mapped !== null) {
+            $body['reasoning_effort'] = $mapped;
+        }
+
         $url = $this->config->baseUrl() . '/chat/completions';
         $headers = ['Authorization: Bearer ' . $this->config->apiKey()];
 
