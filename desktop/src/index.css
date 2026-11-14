@@ -41,6 +41,11 @@ body {
 
 ::selection { background: color-mix(in srgb, var(--primary) 35%, transparent); }
 
+/* Radix ScrollArea 内容层默认 display:table（为横向滚动服务），行宽按内容撑开，
+   导致侧栏里不可换行的长项目名把整行（含悬浮按钮）顶出栏外。本应用只纵向滚动，
+   改回 block 让行宽锁定为视口宽，truncate 才能生效。 */
+[data-radix-scroll-area-viewport] > div { display: block !important; }
+
 /* Markdown 排版（chat 消息正文） */
 .prose-agent p { margin: 0.4em 0; }
 .prose-agent ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
