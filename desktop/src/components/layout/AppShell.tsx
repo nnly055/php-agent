@@ -1,25 +1,11 @@
-import { TitleBar } from "./TitleBar";
-import { Sidebar } from "./Sidebar";
-import { StatusBar } from "./StatusBar";
-import { ChatView } from "../chat/ChatView";
+import type { ReactNode } from "react";
 
-export function AppShell({
-  onNewSession,
-  onCloseProject,
-}: {
-  onNewSession: () => void;
-  onCloseProject: () => void;
-}) {
+/** 顶层骨架：侧栏 + 主列。主列内容由 App 注入（Provider 包裹的横幅/标题栏/聊天）。 */
+export function AppShell({ sidebar, main }: { sidebar: ReactNode; main: ReactNode }) {
   return (
-    <div className="flex h-full flex-col bg-bg text-ink">
-      <TitleBar />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar onNewSession={onNewSession} onCloseProject={onCloseProject} />
-        <main className="flex min-w-0 flex-1 flex-col">
-          <ChatView />
-        </main>
-      </div>
-      <StatusBar />
+    <div className="flex h-screen bg-bg text-ink">
+      {sidebar}
+      <main className="flex min-w-0 flex-1 flex-col">{main}</main>
     </div>
   );
 }

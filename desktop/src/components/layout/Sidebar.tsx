@@ -1,43 +1,102 @@
-import { useProjectStore } from "../../store/useProjectStore";
-import { Button } from "../ui/button";
-import { ScrollArea } from "../ui/scroll-area";
-import { FolderOpen, Plus, Search, X } from "lucide-react";
-import { SessionList } from "../sessions/SessionList";
 import { useState } from "react";
+import type { ProjectStore } from "../../store/createProjectStore";
+import { ProjectProvider, useProjectStore } from "../../store/useProjectStore";
+import { ScrollArea } from "../ui/scroll-area";
+import { SessionList } from "../sessions/SessionList";
+import { ChevronDown, ChevronRight, FolderOpen, Plus, Search, Settings, X } from "lucide-react";
+import { useUiStore } from "../../store/useUiStore";
+import { cn } from "../../lib/utils";
+
+type SidebarTab = { id: string; path: string; store: ProjectStore };
+
+const baseName = (path: string) => path.split("/").filter(Boolean).pop() ?? path;
+
+/** 组内会话列表：读所在 ProjectProvider 的 store，按 q 过滤；点击会话先经 onActivate 切项目。 */
+function GroupSessions({ onActivate, q }: { onActivate: () => void; q: string }) {
+  const store = useProjectStore();
+  const sessions = store((s) => s.sessions);
+  const filtered = sessions.filter((s) => s.title.toLowerCase().includes(q.toLowerCase()));
+  return <SessionList sessions={filtered} onActivate={onActivate} />;
+}
 
 export function Sidebar({
-  onNewSession,
+  tabs,
+  activeId,
+  projects,
+  booting,
+  onSelectTab,
+  onAddProject,
+  onOpenProject,
   onCloseProject,
+  onNewSession,
 }: {
+  tabs: SidebarTab[];
+  activeId: string | null;
+  projects: string[];
+  booting: string | null;
+  onSelectTab: (id: string) => void;
+  onAddProject: () => void;
+  onOpenProject: (path: string) => void;
+  onCloseProject: (id: string) => void;
   onNewSession: () => void;
-  onCloseProject: () => void;
 }) {
-  const store = useProjectStore();
-  const workspace = store((s) => s.status?.workspace);
-  const sessions = store((s) => s.sessions);
   const [q, setQ] = useState("");
+  // 折叠状态按项目路径为键：tab id 会被 sidecar 重启重绑，路径稳定
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // 版本是构建期常量，非响应式读取激活项目 store 即可，不订阅
+  const version = tabs.find((t) => t.id === activeId)?.store.getState().status?.version;
+  const unopened = projects.filter((p) => !tabs.some((t) => t.path === p));
 
-  const filtered = sessions.filter((s) => s.title.toLowerCase().includes(q.toLowerCase()));
+  const groupHeader = (tab: SidebarTab) => {
+    const name = baseName(tab.path);
+    const isCollapsed = collapsed[tab.path] ?? false;
+    return (
+      <div
+        className={cn(
+          "group flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs transition-colors",
+          tab.id === activeId ? "bg-primary/10 text-ink" : "text-muted hover:bg-elevated hover:text-ink"
+        )}
+        onClick={() => onSelectTab(tab.id)}
+        title={tab.path}
+      >
+        <button
+          aria-label={`折叠项目 ${name}`}
+          className="shrink-0 text-muted hover:text-ink"
+          onClick={(e) => {
+            e.stopPropagation();
+            setCollapsed((prev) => ({ ...prev, [tab.path]: !isCollapsed }));
+          }}
+        >
+          {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+        </button>
+        <FolderOpen size={13} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{name}</span>
+        {booting === tab.path && <span className="animate-pulse text-[11px]">启动中…</span>}
+        <button
+          aria-label={`关闭项目 ${name}`}
+          className="shrink-0 rounded p-0.5 text-muted opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCloseProject(tab.id);
+          }}
+        >
+          <X size={12} />
+        </button>
+      </div>
+    );
+  };
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
-      <div className="flex items-center gap-2 border-b border-border p-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-2 py-1.5 text-muted" title={workspace}>
-          <FolderOpen size={14} className="shrink-0" />
-          <span className="truncate text-sm">{workspace ? workspace.split("/").pop() : "项目"}</span>
-        </div>
-        <Button size="sm" className="bg-primary-deep text-white hover:bg-primary" onClick={onNewSession} title="新建会话">
-          <Plus size={16} />
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="shrink-0 border-danger/40 text-danger hover:bg-danger/10"
-          onClick={onCloseProject}
-          title="关闭此项目（进程退出，会话记录保留）"
+      {/* 红绿灯预留行（macOS Overlay 模式下系统红绿灯悬于此处）；整行拖拽窗口 */}
+      <div data-tauri-drag-region className="h-12 shrink-0" />
+      <div className="px-3 pb-2">
+        <button
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary-deep py-2 text-sm font-medium text-white transition-colors hover:bg-primary"
+          onClick={onNewSession}
         >
-          <X size={16} />
-        </Button>
+          <Plus size={15} /> 新建会话
+        </button>
       </div>
       <div className="flex items-center gap-2 px-3 py-2 text-muted">
         <Search size={14} />
@@ -48,9 +107,58 @@ export function Sidebar({
           className="w-full bg-transparent text-xs text-ink outline-none placeholder:text-muted"
         />
       </div>
+      <div className="flex items-center px-3 py-1 text-xs text-muted">
+        <span>项目</span>
+        <button
+          aria-label="添加项目"
+          className="ml-auto rounded p-0.5 text-muted transition-colors hover:bg-elevated hover:text-ink"
+          onClick={onAddProject}
+          title="添加项目目录（每个项目一个独立 PHP 进程）"
+        >
+          <Plus size={13} />
+        </button>
+      </div>
       <ScrollArea className="flex-1">
-        <SessionList sessions={filtered} />
+        {tabs.map((tab) => {
+          const isCollapsed = collapsed[tab.path] ?? false;
+          return (
+            <div key={tab.id} className="px-2 pb-1">
+              {groupHeader(tab)}
+              {!isCollapsed && (
+                <div className="pl-3">
+                  <ProjectProvider store={tab.store}>
+                    <GroupSessions onActivate={() => onSelectTab(tab.id)} q={q} />
+                  </ProjectProvider>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {unopened.map((p) => (
+          <button
+            key={p}
+            disabled={booting !== null}
+            className="mx-2 mb-1 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-elevated hover:text-ink disabled:opacity-50"
+            onClick={() => onOpenProject(p)}
+            title={p}
+          >
+            <FolderOpen size={13} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{baseName(p)}</span>
+            {booting === p && <span className="animate-pulse text-[11px]">启动中…</span>}
+          </button>
+        ))}
       </ScrollArea>
+      <div className="flex items-center border-t border-border px-3 py-2">
+        <span className="font-mono text-[11px] text-muted">v{version ?? ""}</span>
+        <button
+          aria-label="打开设置"
+          className="ml-auto rounded p-0.5 text-muted transition-colors hover:bg-elevated hover:text-ink"
+          onClick={() => useUiStore.getState().setSettingsOpen(true)}
+          title="配置 API"
+        >
+          <Settings size={14} />
+        </button>
+      </div>
     </aside>
   );
 }

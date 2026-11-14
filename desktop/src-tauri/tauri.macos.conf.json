@@ -1,0 +1,18 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PHP Agent",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "theme": "Dark",
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay"
+      }
+    ]
+  }
+}

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import { ConnectionBanner } from "./components/ConnectionBanner";
-import { EmptyProjects, ProjectTabs } from "./components/layout/ProjectTabs";
+import { SessionHeader } from "./components/layout/SessionHeader";
+import { Sidebar } from "./components/layout/Sidebar";
+import { EmptyProjects } from "./components/layout/EmptyProjects";
+import { ChatView } from "./components/chat/ChatView";
 import { ProjectProvider } from "./store/useProjectStore";
 import { createProjectStore, type ProjectStore } from "./store/createProjectStore";
 import { useBackendLiveness } from "./hooks/useBackendLiveness";
@@ -22,13 +25,8 @@ import { getStatus, listSessions, pushProfiles } from "./lib/api";
 /** 一个打开的项目标签：独立 store（独立 sidecar 进程）+ 项目路径。 */
 type ProjectTab = { id: string; path: string; store: ProjectStore };
 
-function projectName(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? path;
-}
-
-/** 当前项目的完整工作区（会话侧栏 + 聊天视图 + 授权弹窗），挂载时拉取 status/sessions。 */
-function ProjectWorkspace({ tab, onClose }: { tab: ProjectTab; onClose: () => void }) {
+/** 激活项目的主列（横幅 + 会话标题栏 + 聊天视图），挂载时拉取 status/sessions。 */
+function ProjectWorkspace({ tab }: { tab: ProjectTab }) {
   const store = tab.store;
   useBackendLiveness(true);
 
@@ -51,14 +49,11 @@ function ProjectWorkspace({ tab, onClose }: { tab: ProjectTab; onClose: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.id]);
 
-  function newSession() {
-    store.getState().setActiveSession(`web-${Date.now().toString(36)}`, []);
-  }
-
   return (
     <>
       <ConnectionBanner onRetry={refresh} />
-      <AppShell onNewSession={newSession} onCloseProject={onClose} />
+      <SessionHeader />
+      <ChatView />
     </>
   );
 }
@@ -179,21 +174,24 @@ export default function App() {
   const activeTab = tabs.find((t) => t.id === activeId) ?? null;
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-ink">
-      <ProjectTabs
-        tabs={tabs.map((t) => ({ id: t.id, name: projectName(t.path), path: t.path }))}
-        activeId={activeId}
-        projects={projects.filter((p) => !tabs.some((t) => t.path === p))}
-        onSelect={setActiveId}
-        onClose={(id) => { const t = tabs.find((x) => x.id === id); if (t) closeTab(t); }}
-        onAdd={addProject}
-        onOpen={(path) => openPath(path)}
-        booting={booting}
-      />
-      <div className="flex min-h-0 flex-1 flex-col">
-        {activeTab ? (
+    <>
+      <AppShell
+        sidebar={activeTab && (
+          <Sidebar
+            tabs={tabs}
+            activeId={activeId}
+            projects={projects.filter((p) => !tabs.some((t) => t.path === p))}
+            booting={booting}
+            onSelectTab={setActiveId}
+            onAddProject={addProject}
+            onOpenProject={(p) => openPath(p)}
+            onCloseProject={(id) => { const t = tabs.find((x) => x.id === id); if (t) closeTab(t); }}
+            onNewSession={() => activeTab.store.getState().setActiveSession(`web-${Date.now().toString(36)}`, [])}
+          />
+        )}
+        main={activeTab ? (
           <ProjectProvider store={activeTab.store}>
-            <ProjectWorkspace tab={activeTab} onClose={() => { const t = activeTab; if (t) closeTab(t); }} />
+            <ProjectWorkspace tab={activeTab} />
           </ProjectProvider>
         ) : booted ? (
           <EmptyProjects
@@ -206,11 +204,11 @@ export default function App() {
         ) : (
           <div className="grid h-full place-items-center animate-pulse font-mono text-sm text-muted">正在启动…</div>
         )}
-      </div>
+      />
       <SettingsDialog
         testUrl={activeTab?.store.getState().connected ? activeTab.store.getState().backendUrl : null}
         activeWorkspace={activeTab?.path ?? null}
       />
-    </div>
+    </>
   );
 }
