@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { SessionMeta } from "../../lib/api";
+import { relativeTime } from "../../lib/relativeTime";
 import { type ChatMessage, type ToolCard } from "../../store/useAppStore";
 import { useProjectStore } from "../../store/useProjectStore";
 import { loadSession, deleteSession, listSessions } from "../../lib/api";
@@ -38,12 +39,14 @@ function toChatMessages(messages: any[]): ChatMessage[] {
   return out;
 }
 
-export function SessionItem({ meta }: { meta: SessionMeta }) {
+export function SessionItem({ meta, onActivate }: { meta: SessionMeta; onActivate?: () => void }) {
   const store = useProjectStore();
   const active = store((s) => s.activeSession) === meta.id;
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function open() {
+    // 跨项目场景：先切激活项目，再加载会话（否则请求打到错误 sidecar）
+    onActivate?.();
     try {
       const { messages } = await loadSession(store.getState().backendUrl, meta.id);
       store.getState().setActiveSession(meta.id, toChatMessages(messages));
@@ -73,6 +76,7 @@ export function SessionItem({ meta }: { meta: SessionMeta }) {
         <MessageSquare size={14} className={active ? "text-primary" : "text-muted"} />
         <span className={cn("truncate text-xs", active ? "text-ink" : "text-muted")}>{meta.title}</span>
       </button>
+      <span className="shrink-0 text-[11px] text-muted">{relativeTime(meta.updatedAt)}</span>
       <DropdownMenu>
         <DropdownMenuTrigger aria-label="会话操作" className="opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100">
           <MoreVertical size={14} className="text-muted" />

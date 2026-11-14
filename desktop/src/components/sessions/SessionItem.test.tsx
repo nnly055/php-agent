@@ -92,6 +92,22 @@ describe("SessionItem", () => {
     expect(msgs.every((m) => m.text || m.tools.length)).toBe(true);
   });
 
+  it("open 先调用 onActivate 再 loadSession（跨项目切换顺序）", async () => {
+    const order: string[] = [];
+    vi.mocked(loadSession).mockImplementation(async () => {
+      order.push("load");
+      return { id: "s1", messages: [] };
+    });
+    render(<SessionItem meta={meta} onActivate={() => order.push("activate")} />);
+    fireEvent.click(screen.getByRole("button", { name: /测试会话/ }));
+    await waitFor(() => expect(order).toEqual(["activate", "load"]));
+  });
+
+  it("会话行显示 updatedAt 相对时间", () => {
+    render(<SessionItem meta={{ ...meta, updatedAt: Date.now() - 4 * 60_000 }} />);
+    expect(screen.getByText("4分")).toBeInTheDocument();
+  });
+
   it("历史回放渲染用户消息里的图片", async () => {
     // mock loadSession 返回含 image 块的用户消息
     vi.mocked(loadSession).mockResolvedValue({
