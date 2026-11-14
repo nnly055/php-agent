@@ -34,6 +34,7 @@ final class AgentLoop
      * @param array $images 用户本轮附带的图片：['media_type'=>string,'data'=>base64 string] 列表；
      *                      经 normalizeImages 校验归一化后置于文本块之前（图前文后）；
      *                      有图无文本合法；无图无文本保持旧的 text '' 块（CLI 兼容）
+     * @param array $opts per-request 选项，原样透传 LLMClient::stream（如 ['effort'=>'high']）
      * @return string 最终文本回答
      */
     public function run(
@@ -41,6 +42,7 @@ final class AgentLoop
         string $userInput,
         ?\Closure $onEvent = null,
         array $images = [],
+        array $opts = [],
     ): string {
         $emit = $onEvent ?? static fn (StreamEvent $e) => null;
         $this->onEvent = $emit;
@@ -73,7 +75,7 @@ final class AgentLoop
             }
             unset($hookPayload, $notes);
 
-            [$text, $assistantBlocks] = $this->oneRound($messages);
+            [$text, $assistantBlocks] = $this->oneRound($messages, $opts);
 
             $messages[] = ['role' => 'assistant', 'content' => $assistantBlocks];
 
@@ -202,7 +204,7 @@ final class AgentLoop
      *
      * @return array{0: string, 1: array<int, array>} 文本 + 块列表
      */
-    private function oneRound(array $messages): array
+    private function oneRound(array $messages, array $opts = []): array
     {
         $emit0 = $this->onEvent;
         $emitError = null;
@@ -222,10 +224,12 @@ final class AgentLoop
         $openTools = [];
         /** @var array<int, array> $toolBlocks 按完成顺序收集 tool_use 块 */
         $toolBlocks = [];
+        /** @var array<int, array> $thinkingBlocks 带签名思考块/加密思考块（回放用，前置入史） */
+        $thinkingBlocks = [];
         $ended = false;
         $streamError = null;
 
-        $events = $this->client->stream($messages, $this->registry->specs(), $this->system);
+        $events = $this->client->stream($messages, $this->registry->specs(), $this->system, $opts);
 
         foreach ($events as $ev) {
             switch ($ev->type) {
@@ -235,7 +239,22 @@ final class AgentLoop
                     break;
 
                 case 'thinking_delta':
-                    $emit($ev); // 思维链只透传给 UI，不进历史
+                    $emit($ev); // 思维链逐字透传 UI（是否入史由 thinking_end/redacted 决定）
+                    break;
+
+                case 'thinking_end':
+                    // 仅带签名块入历史：Anthropic 回放无签名块必 400（openai reasoning_content 无签名）
+                    if ((string) ($ev->data['signature'] ?? '') !== '') {
+                        $thinkingBlocks[] = [
+                            'type' => 'thinking',
+                            'thinking' => (string) ($ev->data['text'] ?? ''),
+                            'signature' => (string) $ev->data['signature'],
+                        ];
+                    }
+                    break;
+
+                case 'thinking_redacted':
+                    $thinkingBlocks[] = ['type' => 'redacted_thinking', 'data' => (string) $ev->data['data']];
                     break;
 
                 case 'tool_use_start':
@@ -284,6 +303,8 @@ final class AgentLoop
         }
 
         $assistantBlocks = [];
+        // thinking/redacted 块前置（Anthropic 协议要求 thinking 位于 content 首位）
+        array_push($assistantBlocks, ...$thinkingBlocks);
         if (trim($text) !== '') {
             $assistantBlocks[] = ['type' => 'text', 'text' => $text];
         }
