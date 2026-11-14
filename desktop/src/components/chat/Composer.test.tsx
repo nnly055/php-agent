@@ -31,7 +31,7 @@ describe("Composer IME guard", () => {
     useAppStore.getState().reset();
     const onSend = vi.fn();
     render(<Composer onSend={onSend} onAbort={() => {}} />);
-    const ta = screen.getByPlaceholderText(/输入任务/);
+    const ta = screen.getByPlaceholderText(/提出你的任务/);
     fireEvent.change(ta, { target: { value: "nihao" } });
     fireEvent.keyDown(ta, { key: "Enter", isComposing: true });
     expect(onSend).not.toHaveBeenCalled();
@@ -40,7 +40,7 @@ describe("Composer IME guard", () => {
     useAppStore.getState().reset();
     const onSend = vi.fn();
     render(<Composer onSend={onSend} onAbort={() => {}} />);
-    const ta = screen.getByPlaceholderText(/输入任务/);
+    const ta = screen.getByPlaceholderText(/提出你的任务/);
     fireEvent.change(ta, { target: { value: "hello" } });
     fireEvent.keyDown(ta, { key: "Enter" });
     expect(onSend).toHaveBeenCalledWith("hello", []);
@@ -107,6 +107,34 @@ describe("Composer 平台/模型切换器", () => {
   });
 });
 
+describe("Composer 权限徽章", () => {
+  beforeEach(() => {
+    useAppStore.getState().reset();
+    useUiStore.getState().setSettingsOpen(false);
+  });
+  const status = { provider: "openai", model: "gpt-4o", workspace: "/tmp", permissions: "ask" as const, sessionStore: "json", mcp: true, version: "0.2.0", maxIterations: 25 };
+
+  it("permissions=ask 显示 按需授权，点击打开设置", () => {
+    useAppStore.getState().setStatus(status);
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
+    fireEvent.click(screen.getByText("按需授权"));
+    expect(useUiStore.getState().settingsOpen).toBe(true);
+  });
+
+  it("permissions=all 显示 全部放行", () => {
+    useAppStore.getState().setStatus({ ...status, permissions: "all" as const });
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
+    expect(screen.getByText("全部放行")).toBeInTheDocument();
+  });
+
+  it("流式中发送钮变停止钮", () => {
+    useAppStore.getState().beginTurn("hi");
+    render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
+    expect(screen.getByTitle("停止")).toBeInTheDocument();
+    expect(screen.queryByTitle("发送")).not.toBeInTheDocument();
+  });
+});
+
 describe("Composer 图片附件", () => {
   const pngFile = () => new File(["x"], "a.png", { type: "image/png" });
 
@@ -126,12 +154,12 @@ describe("Composer 图片附件", () => {
     fireEvent.click(screen.getByLabelText("移除图片"));
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     // 删除后无文本无附件，Enter 不发送
-    fireEvent.keyDown(screen.getByPlaceholderText(/输入任务/), { key: "Enter" });
+    fireEvent.keyDown(screen.getByPlaceholderText(/提出你的任务/), { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
     // 再次选图后 Enter 发送，携带 images 数组（previewUrl 不上送）
     fireEvent.change(input, { target: { files: [pngFile()] } });
     await screen.findByRole("img");
-    fireEvent.keyDown(screen.getByPlaceholderText(/输入任务/), { key: "Enter" });
+    fireEvent.keyDown(screen.getByPlaceholderText(/提出你的任务/), { key: "Enter" });
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith("", [{ mediaType: "image/png", data: "AAAA" }]);
     // 发送后清空附件
@@ -140,7 +168,7 @@ describe("Composer 图片附件", () => {
 
   it("粘贴图片文件进预览，非图片 MIME 被忽略", async () => {
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    const ta = screen.getByPlaceholderText(/输入任务/);
+    const ta = screen.getByPlaceholderText(/提出你的任务/);
     const textFile = new File(["y"], "a.txt", { type: "text/plain" });
     fireEvent.paste(ta, { clipboardData: { files: [pngFile(), textFile] } });
     const thumbs = await screen.findAllByRole("img");

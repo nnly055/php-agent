@@ -2,7 +2,7 @@ import { useState, useRef, type KeyboardEvent, type ClipboardEvent } from "react
 import { useProjectStore } from "../../store/useProjectStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Button } from "../ui/button";
-import { SendHorizonal, Square, ImagePlus, X } from "lucide-react";
+import { ArrowUp, Square, ImagePlus, X, ShieldCheck, ShieldOff } from "lucide-react";
 import { MAX_IMAGES, fileToAttachment } from "../../lib/imageFile";
 import type { ImageAttachment } from "../../lib/api";
 
@@ -20,6 +20,7 @@ function revokePreview(url: string) {
 export function Composer({ onSend, onAbort }: { onSend: (t: string, images: ImageAttachment[]) => void; onAbort: () => void }) {
   const store = useProjectStore();
   const streaming = store((s) => s.streaming);
+  const status = store((s) => s.status);
   const selection = store((s) => s.selection);
   const setSelection = store((s) => s.setSelection);
   const profilesPayload = useUiStore((s) => s.profilesPayload);
@@ -100,39 +101,8 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
   }
 
   return (
-    <div className="shrink-0 border-t border-border bg-surface p-3">
-      <div className="mx-auto max-w-[860px]">
-        {profiles.length > 0 && (
-          <div className="mb-2 flex items-center gap-2 text-xs text-muted">
-            <select
-              aria-label="平台"
-              value={activeId}
-              onChange={(e) => {
-                const id = e.target.value;
-                // 切平台回落该档首个模型名，避免带着别的平台的模型名发请求
-                const first = profiles.find((p) => p.id === id)?.models[0]?.name ?? null;
-                setSelection({ profileId: id, model: first });
-              }}
-              className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-ink outline-none transition-colors focus:border-primary"
-            >
-              {platformTemp && <option value={activeId}>{activeId}</option>}
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>{p.name || p.provider}</option>
-              ))}
-            </select>
-            <select
-              aria-label="模型"
-              value={currentModel}
-              onChange={(e) => setSelection({ profileId: activeId, model: e.target.value })}
-              className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-ink outline-none transition-colors focus:border-primary"
-            >
-              {modelTemp && <option value={currentModel}>{currentModel}</option>}
-              {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-        )}
+    <div className="shrink-0 px-4 pb-4 pt-2">
+      <div className="mx-auto max-w-[860px] rounded-2xl border border-border bg-surface px-3 pt-2 pb-2 transition-colors focus-within:border-primary">
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map((a, i) => (
@@ -150,15 +120,26 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2">
+        <textarea
+          ref={ref}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKey}
+          onPaste={onPaste}
+          rows={1}
+          placeholder="提出你的任务…"
+          title="Enter 发送，Shift+Enter 换行"
+          className="max-h-40 w-full resize-none bg-transparent px-1.5 py-2 text-sm text-ink outline-none placeholder:text-muted"
+        />
+        <div className="flex items-center gap-1.5">
           <Button
-            variant="outline"
+            variant="ghost"
             size="icon"
-            className="h-11 w-11 shrink-0 text-muted hover:text-ink"
+            className="h-8 w-8 shrink-0 text-muted hover:text-ink"
             onClick={() => fileInputRef.current?.click()}
             title="添加图片"
           >
-            <ImagePlus size={18} />
+            <ImagePlus size={16} />
           </Button>
           <input
             ref={fileInputRef}
@@ -172,25 +153,59 @@ export function Composer({ onSend, onAbort }: { onSend: (t: string, images: Imag
               e.target.value = ""; // 允许再次选择同一文件
             }}
           />
-          <textarea
-            ref={ref}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKey}
-            onPaste={onPaste}
-            rows={1}
-            placeholder="输入任务…（Enter 发送，Shift+Enter 换行）"
-            className="max-h-40 flex-1 resize-none rounded-xl border border-border bg-bg px-4 py-3 text-sm text-ink outline-none transition-colors placeholder:text-muted focus:border-primary"
-          />
-          {streaming ? (
-            <Button variant="outline" size="icon" className="h-11 w-11 border-danger/40 text-danger" onClick={onAbort} title="停止">
-              <Square size={16} />
-            </Button>
-          ) : (
-            <Button size="icon" className="h-11 w-11 bg-primary-deep text-white hover:bg-primary" onClick={submit} disabled={!text.trim() && attachments.length === 0} title="发送">
-              <SendHorizonal size={18} />
-            </Button>
+          {status && (
+            <button
+              type="button"
+              onClick={() => useUiStore.getState().setSettingsOpen(true)}
+              title="权限设置"
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-ink"
+            >
+              {status.permissions === "ask" ? <ShieldCheck size={13} className="text-success" /> : <ShieldOff size={13} className="text-warning" />}
+              {status.permissions === "ask" ? "按需授权" : "全部放行"}
+            </button>
           )}
+          <div className="ml-auto flex items-center gap-1.5">
+            {profiles.length > 0 && (
+              <>
+                <select
+                  aria-label="平台"
+                  value={activeId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    // 切平台回落该档首个模型名，避免带着别的平台的模型名发请求
+                    const first = profiles.find((p) => p.id === id)?.models[0]?.name ?? null;
+                    setSelection({ profileId: id, model: first });
+                  }}
+                  className="rounded-md bg-transparent px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:bg-elevated"
+                >
+                  {platformTemp && <option value={activeId}>{activeId}</option>}
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name || p.provider}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="模型"
+                  value={currentModel}
+                  onChange={(e) => setSelection({ profileId: activeId, model: e.target.value })}
+                  className="max-w-44 rounded-md bg-transparent px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:bg-elevated"
+                >
+                  {modelTemp && <option value={currentModel}>{currentModel}</option>}
+                  {models.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </>
+            )}
+            {streaming ? (
+              <Button variant="outline" size="icon" className="h-9 w-9 shrink-0 rounded-full border-danger/40 text-danger" onClick={onAbort} title="停止">
+                <Square size={14} />
+              </Button>
+            ) : (
+              <Button size="icon" className="h-9 w-9 shrink-0 rounded-full bg-primary-deep text-white hover:bg-primary" onClick={submit} disabled={!text.trim() && attachments.length === 0} title="发送">
+                <ArrowUp size={16} />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>
