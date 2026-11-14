@@ -102,7 +102,7 @@ final class ModelCommandTest extends TestCase
     {
         $startClient = $this->kernel->loop()->client();
         $out = $this->kernel->command('model')->execute(['cl', 'claude-sonnet-4-5'], $this->ctx);
-        self::assertSame(['profileId' => 'cl', 'model' => 'claude-sonnet-4-5'], $this->ctx->selection);
+        self::assertSame(['profileId' => 'cl', 'model' => 'claude-sonnet-4-5', 'effort' => null], $this->ctx->selection);
         self::assertNotSame($startClient, $this->kernel->loop()->client(), 'setClient 生效');
         self::assertSame($this->kernel->loop()->client(), $this->kernel->profileRegistry()->activeClient(), 'compact 跟随当前生效模型');
         self::assertStringContainsString('anthropic', $out);
@@ -112,20 +112,20 @@ final class ModelCommandTest extends TestCase
     public function testModelSwitchSameProviderNoReplayHint(): void
     {
         $out = $this->kernel->command('model')->execute(['glm', 'glm-4.5-air'], $this->ctx);
-        self::assertSame(['profileId' => 'glm', 'model' => 'glm-4.5-air'], $this->ctx->selection);
+        self::assertSame(['profileId' => 'glm', 'model' => 'glm-4.5-air', 'effort' => null], $this->ctx->selection);
         self::assertStringNotContainsString('回放', $out); // 同协议（openai → openai）
     }
 
     public function testModelSwitchProfileOnlyFallsToFirstModel(): void
     {
         $this->kernel->command('model')->execute(['cl'], $this->ctx);
-        self::assertSame(['profileId' => 'cl', 'model' => 'claude-sonnet-4-5'], $this->ctx->selection);
+        self::assertSame(['profileId' => 'cl', 'model' => 'claude-sonnet-4-5', 'effort' => null], $this->ctx->selection);
     }
 
     public function testModelSwitchAllowsUncataloguedModel(): void
     {
         $this->kernel->command('model')->execute(['glm', 'glm-4.5v'], $this->ctx);
-        self::assertSame(['profileId' => 'glm', 'model' => 'glm-4.5v'], $this->ctx->selection);
+        self::assertSame(['profileId' => 'glm', 'model' => 'glm-4.5v', 'effort' => null], $this->ctx->selection);
     }
 
     public function testModelRejectsUnknownProfile(): void
@@ -143,5 +143,35 @@ final class ModelCommandTest extends TestCase
         $messages = []; $sid = 's'; $sel = null;
         $out = $k->command('model')->execute([], new CommandContext($k, $messages, $sid, $sel));
         self::assertStringContainsString('不可用', $out);
+    }
+
+    // ── /effort 命令 + /model 输出附强度 ───────────────────────
+
+    public function testEffortCommandSetsSelectionPreservingProfile(): void
+    {
+        $this->kernel->command('model')->execute(['cl', 'claude-sonnet-4-5'], $this->ctx);
+        $out = $this->kernel->command('effort')->execute(['max'], $this->ctx);
+        self::assertSame(['profileId' => 'cl', 'model' => 'claude-sonnet-4-5', 'effort' => 'max'], $this->ctx->selection);
+        self::assertStringContainsString('max', $out);
+    }
+
+    public function testEffortCommandRejectsUnknownValue(): void
+    {
+        $out = $this->kernel->command('effort')->execute(['turbo'], $this->ctx);
+        self::assertStringContainsString('off|low|medium|high|max', $out);
+        self::assertNull($this->ctx->selection);
+    }
+
+    public function testEffortCommandShowsCurrent(): void
+    {
+        $out = $this->kernel->command('effort')->execute([], $this->ctx);
+        self::assertStringContainsString('off', $out);
+    }
+
+    public function testModelCatalogShowsEffort(): void
+    {
+        $out = $this->kernel->command('model')->execute([], $this->ctx);
+        self::assertStringContainsString('思考强度', $out);
+        self::assertStringContainsString('off', $out);
     }
 }

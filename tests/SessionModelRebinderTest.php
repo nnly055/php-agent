@@ -48,7 +48,7 @@ final class SessionModelRebinderTest extends TestCase
         $expected = $this->registry->resolve('glm', 'glm-4.6');
 
         $sel = SessionModelRebinder::rebind($this->registry, $this->loop, 's1', $this->store);
-        self::assertSame(['profileId' => 'glm', 'model' => 'glm-4.6'], $sel);
+        self::assertSame(['profileId' => 'glm', 'model' => 'glm-4.6', 'effort' => null], $sel);
         self::assertSame($expected, $this->loop->client());
     }
 
@@ -90,5 +90,29 @@ final class SessionModelRebinderTest extends TestCase
         $sel2 = SessionModelRebinder::rebind($this->registry, $this->loop, 'brand-new', $this->store);
         self::assertNull($sel2);
         self::assertSame($default, $this->loop->client());
+    }
+
+    public function testRebindRestoresEffortOnlySession(): void
+    {
+        // /effort 而不 /model 的会话（有 effort 无 profile）：resume 后强度不丢
+        // client 重绑默认档（无 profile 可解析），selection 返回含 effort 的三键
+        $msgs = [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]];
+        $this->store->save('s3', $msgs, ['profileId' => null, 'model' => null, 'effort' => 'high']);
+        $default = $this->registry->resolve(null, null);
+
+        $sel = SessionModelRebinder::rebind($this->registry, $this->loop, 's3', $this->store);
+        self::assertSame(['profileId' => null, 'model' => null, 'effort' => 'high'], $sel);
+        self::assertSame($default, $this->loop->client());
+    }
+
+    public function testRebindCarriesEffortWithProfile(): void
+    {
+        $msgs = [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]];
+        $this->store->save('s1', $msgs, ['profileId' => 'glm', 'model' => 'glm-4.6', 'effort' => 'max']);
+        $expected = $this->registry->resolve('glm', 'glm-4.6');
+
+        $sel = SessionModelRebinder::rebind($this->registry, $this->loop, 's1', $this->store);
+        self::assertSame(['profileId' => 'glm', 'model' => 'glm-4.6', 'effort' => 'max'], $sel);
+        self::assertSame($expected, $this->loop->client());
     }
 }
