@@ -503,6 +503,17 @@ fn validate_profiles(profiles: &[ProfileConfig], default_profile: &str) -> Resul
         if p.models.iter().any(|m| m.name.trim().is_empty()) {
             return Err(format!("模型 name 不能为空: {}", p.id));
         }
+        if p.models.is_empty() {
+            return Err(format!("模型列表不能为空（至少一个模型名）: {}", p.id));
+        }
+        // base_url 仅允许空（回落 provider 默认端点）或 http(s):// 开头——
+        // 与内核 /config/test 的 scheme 校验同型，否则一次手滑「1」就能让该档所有请求必败
+        if !p.base_url.is_empty()
+            && !p.base_url.starts_with("http://")
+            && !p.base_url.starts_with("https://")
+        {
+            return Err(format!("base_url 必须以 http:// 或 https:// 开头: {}", p.id));
+        }
     }
     if !profiles.iter().any(|p| p.id == default_profile) {
         return Err("defaultProfile 必须在 profiles 中".into());
@@ -858,6 +869,22 @@ mod tests {
         let mut bad = sample_profiles();
         bad[0].provider = "nope".into();
         assert!(validate_profiles(&bad, "p-1").is_err(), "provider 非法拒绝");
+    }
+
+    #[test]
+    fn validate_profiles_requires_models_and_http_base_url() {
+        // 空模型列表：胶囊无名字可显示、弹层无行可选——保存即拒绝
+        let mut no_models = sample_profiles();
+        no_models[0].models = vec![];
+        assert!(validate_profiles(&no_models, "p-1").is_err(), "models 为空拒绝");
+
+        // base_url 仅允许空（回落 provider 默认端点）或 http(s):// 开头
+        let mut junk_url = sample_profiles();
+        junk_url[0].base_url = "1".into();
+        assert!(validate_profiles(&junk_url, "p-1").is_err(), "base_url 非 http(s) 拒绝");
+        let mut empty_url = sample_profiles();
+        empty_url[0].base_url = "".into();
+        assert!(validate_profiles(&empty_url, "p-1").is_ok(), "base_url 空 = provider 默认端点，放行");
     }
 
     #[test]
