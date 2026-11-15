@@ -31,7 +31,19 @@ describe("ModelPicker（Composer 模型胶囊按钮）", () => {
     useUiStore.getState().setProfilesPayload(payload);
     useAppStore.getState().setActiveSession("web-1", []);
     render(<ModelPicker />);
+    // off 是默认态：胶囊不附强度后缀
     expect(screen.getByRole("button", { name: "选择模型" })).toHaveTextContent("deepseek-chat");
+    expect(screen.getByRole("button", { name: "选择模型" })).not.toHaveTextContent("关");
+  });
+
+  it("胶囊显示当前思考强度（非 off 时附档位后缀，显示=实际）", () => {
+    useUiStore.getState().setProfilesPayload(payload);
+    useAppStore.getState().setActiveSession("web-1", []);
+    useAppStore.getState().setSelection({ profileId: "p-1", model: "deepseek-chat", effort: "max" });
+    render(<ModelPicker />);
+    const btn = screen.getByRole("button", { name: "选择模型" });
+    expect(btn).toHaveTextContent("deepseek-chat");
+    expect(btn).toHaveTextContent("最高");
   });
 
   it("弹层按档分组渲染，当前模型带 aria-current", () => {

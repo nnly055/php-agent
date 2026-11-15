@@ -60,6 +60,8 @@ export function ModelPicker() {
   const activeProfile = profiles.find((p) => p.id === activeId);
   // 当前模型：会话选择 > 当前档首个；不在目录的名（恢复会话残留）照样显示（显示=实际）
   const currentModel = selection.model ?? activeProfile?.models[0]?.name ?? "";
+  // 胶囊强度后缀（off = 默认态不显示，弹层内仍标当前）：让静默回落这类 bug 一眼可见
+  const effortLabel = EFFORT_LABELS.find((l) => l.value === selection.effort && l.value !== "off")?.label;
   const platformTemp = activeId !== "" && !profiles.some((p) => p.id === activeId);
   const modelTemp = currentModel !== "" && !activeProfile?.models.some((m) => m.name === currentModel);
 
@@ -74,6 +76,7 @@ export function ModelPicker() {
           className="flex max-w-56 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-ink disabled:opacity-50"
         >
           <span className="truncate">{currentModel}</span>
+          {effortLabel && <span className="shrink-0 text-primary">· {effortLabel}</span>}
           <ChevronDown size={13} className="shrink-0" />
         </button>
       </DropdownMenuTrigger>
