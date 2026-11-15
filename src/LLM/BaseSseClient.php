@@ -32,7 +32,7 @@ abstract class BaseSseClient implements LLMClient
         $aborted = false;
 
         $ch = curl_init($url);
-        curl_setopt_array($ch, [
+        $curlOpts = [
             CURLOPT_POST => true,
             CURLOPT_HTTPHEADER => array_merge(
                 ['Content-Type: application/json', 'Accept: text/event-stream'],
@@ -51,12 +51,17 @@ abstract class BaseSseClient implements LLMClient
                 \Fiber::suspend();
                 return strlen($chunk);
             },
-            // 空闲时也约每秒触发一次，保证 abort 请求在无数据到达时也能生效
-            CURLOPT_XFERINFOFUNCTION => function () use (&$aborted) {
+        ];
+        // 空闲时也约每秒触发一次，保证 abort 请求在无数据到达时也能生效。
+        // 部分 PHP 8.1 curl 构建无此常量（CI 实测，2026-11-14 起 runner 环境变更）——
+        // 缺省时 abort 退化为「数据到达时经 WRITEFUNCTION 生效」，NOPROGRESS 也仅在有进度回调时才有意义
+        if (\defined('CURLOPT_XFERINFOFUNCTION')) {
+            $curlOpts[CURLOPT_XFERINFOFUNCTION] = function () use (&$aborted) {
                 return $aborted ? 1 : 0;
-            },
-            CURLOPT_NOPROGRESS => false,
-        ]);
+            };
+            $curlOpts[CURLOPT_NOPROGRESS] = false;
+        }
+        curl_setopt_array($ch, $curlOpts);
 
         $fiber = new \Fiber(function () use ($ch, &$transportError, &$aborted) {
             $ok = curl_exec($ch);
