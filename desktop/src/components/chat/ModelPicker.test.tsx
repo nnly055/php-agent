@@ -88,9 +88,19 @@ describe("ModelPicker（Composer 模型胶囊按钮）", () => {
     expect(screen.getByRole("menuitemradio", { name: "custom-x" })).toBeInTheDocument();
   });
 
-  it("目录为空时不渲染按钮", () => {
+  it("目录为空时渲染占位按钮，点击直达设置（空态入口，新用户可发现）", () => {
     useUiStore.getState().setProfilesPayload({ profiles: [], defaultProfile: "", defaultModel: "" });
     render(<ModelPicker />);
-    expect(screen.queryByRole("button", { name: "选择模型" })).not.toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: "选择模型" });
+    expect(btn).toHaveTextContent("选择模型");
+    fireEvent.click(btn);
+    expect(useUiStore.getState().settingsOpen).toBe(true);
+  });
+
+  it("目录为 null（壳未就绪）时同样渲染占位按钮", () => {
+    useUiStore.getState().setProfilesPayload(null);
+    render(<ModelPicker />);
+    fireEvent.click(screen.getByRole("button", { name: "选择模型" }));
+    expect(useUiStore.getState().settingsOpen).toBe(true);
   });
 });

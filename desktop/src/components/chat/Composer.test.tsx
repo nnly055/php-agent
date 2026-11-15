@@ -71,16 +71,16 @@ describe("Composer 模型切换器（ModelPicker 胶囊）", () => {
     expect(useAppStore.getState().selection).toEqual({ profileId: "p-2", model: "glm-4.7", effort: "off" });
   });
 
-  it("目录为空数组时不渲染选择器", () => {
+  it("目录为空数组时渲染占位按钮（空态入口）", () => {
     useUiStore.getState().setProfilesPayload({ profiles: [], defaultProfile: "", defaultModel: "" });
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "选择模型" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择模型" })).toBeInTheDocument();
   });
 
-  it("目录为 null 时也不渲染选择器", () => {
+  it("目录为 null 时渲染占位按钮", () => {
     useUiStore.getState().setProfilesPayload(null);
     render(<Composer onSend={vi.fn()} onAbort={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "选择模型" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择模型" })).toBeInTheDocument();
   });
 
   it("当前模型不在列表时胶囊照常显示该名（显示=实际）", () => {

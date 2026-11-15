@@ -40,7 +40,21 @@ export function ModelPicker() {
   const profilesPayload = useUiStore((s) => s.profilesPayload);
 
   const profiles = profilesPayload?.profiles ?? [];
-  if (profiles.length === 0) return null;
+  if (profiles.length === 0) {
+    // 空态入口：新用户目录为空时旧版整行不渲染，功能等于藏死了——给一个直达设置的占位按钮
+    return (
+      <button
+        type="button"
+        aria-label="选择模型"
+        title="先在设置中配置模型平台"
+        onClick={() => useUiStore.getState().setSettingsOpen(true)}
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-ink"
+      >
+        选择模型
+        <ChevronDown size={13} className="shrink-0" />
+      </button>
+    );
+  }
 
   const activeId = selection.profileId ?? profilesPayload?.defaultProfile ?? "";
   const activeProfile = profiles.find((p) => p.id === activeId);
