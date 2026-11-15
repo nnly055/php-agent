@@ -66,7 +66,7 @@ final class ConfigTest extends TestCase
 
     public function testVersionConstantExists(): void
     {
-        self::assertSame('0.2.0', Config::VERSION);
+        self::assertSame('0.5.0', Config::VERSION);
     }
 
     public function testDefaultModeEnvFileOverridesShell(): void

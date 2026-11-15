@@ -35,7 +35,7 @@ final class ConsoleUi
         $workspace = $this->config->workspace();
 
         echo self::BOLD . "╭─────────────────────────────────────────────╮" . self::RESET . "\n";
-        echo self::BOLD . "│  PHP Agent v0.1                             │" . self::RESET . "\n";
+        echo self::BOLD . "│" . str_pad('  PHP Agent v' . Config::VERSION, 45) . "│" . self::RESET . "\n";  # 版本单一来源 Config::VERSION（硬编码曾漂移至 v0.1）
         echo "│  provider : {$provider}\n";
         echo "│  model    : {$model}\n";
         echo "│  api key  : {$key}\n";

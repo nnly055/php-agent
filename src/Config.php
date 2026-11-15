@@ -11,7 +11,7 @@ namespace PhpAgent;
 final class Config
 {
     /** 应用版本（/status 展示用；发版手动 bump，单一来源） */
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.5.0';
 
     private function __construct(private array $env)
     {
