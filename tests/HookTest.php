@@ -107,7 +107,7 @@ final class HookTest extends TestCase
         $captureClient = new class () implements LLMClient {
             public ?array $lastMessages = null;
 
-            public function stream(array $messages, array $tools, string $system): \Generator
+            public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
             {
                 $this->lastMessages = $messages;
                 yield StreamEvent::text('ok');

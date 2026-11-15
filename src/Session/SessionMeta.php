@@ -14,6 +14,7 @@ final class SessionMeta
         public readonly int $messageCount,
         public readonly ?string $profileId = null,
         public readonly ?string $model = null,
+        public readonly ?string $effort = null,
     ) {
     }
 
@@ -51,6 +52,7 @@ final class SessionMeta
             'messageCount' => $this->messageCount,
             'profileId' => $this->profileId,
             'model' => $this->model,
+            'effort' => $this->effort,
         ];
     }
 
@@ -62,9 +64,10 @@ final class SessionMeta
             (int) ($a['createdAt'] ?? 0),
             (int) ($a['updatedAt'] ?? 0),
             (int) ($a['messageCount'] ?? 0),
-            // 旧数据（本功能上线前写入）缺这两个键 → 默认 null
+            // 旧数据（本功能上线前写入）缺这些键 → 默认 null
             isset($a['profileId']) ? (string) $a['profileId'] : null,
             isset($a['model']) ? (string) $a['model'] : null,
+            isset($a['effort']) ? (string) $a['effort'] : null,
         );
     }
 }

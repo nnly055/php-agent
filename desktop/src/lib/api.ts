@@ -19,7 +19,10 @@ export type Status = {
   provider: string; model: string; workspace: string; permissions: string;
   sessionStore: string; mcp: boolean; version: string; maxIterations: number;
 };
-export type SessionMeta = { id: string; title: string; createdAt: number; updatedAt: number; messageCount: number; profileId?: string | null; model?: string | null };
+export type SessionMeta = { id: string; title: string; createdAt: number; updatedAt: number; messageCount: number; profileId?: string | null; model?: string | null; effort?: string | null };
+
+/** 思考强度五档（off = 不发任何思考字段，服务端现行为） */
+export type Effort = "off" | "low" | "medium" | "high" | "max";
 
 export const getStatus = (baseUrl: string, signal?: AbortSignal) => json<Status>(baseUrl, "/status", { signal });
 
@@ -41,7 +44,7 @@ export const confirm = (baseUrl: string, id: string, decision: "y" | "n" | "a") 
   json<{ ok: boolean }>(baseUrl, `/confirm/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ decision }) });
 
 /** 本轮对话的模型选择：均缺省 → 沿用后端默认档（线上不携带对应键） */
-export type TurnSelection = { profileId?: string | null; model?: string | null };
+export type TurnSelection = { profileId?: string | null; model?: string | null; effort?: Effort | null };
 
 /** 随消息发送的图片附件（camelCase 域内表示；wire 上映射为 snake_case 的 images） */
 export type ImageAttachment = { mediaType: string; data: string };
@@ -56,6 +59,8 @@ export async function* agentStream(baseUrl: string, message: string, sessionId: 
       session_id: sessionId,
       ...(selection?.profileId ? { profile_id: selection.profileId } : {}),
       ...(selection?.model ? { model: selection.model } : {}),
+      // effort 恒显式上送（默认 off）：保证「显示=实际」——UI 显示 off 就真的 off
+      effort: selection?.effort ?? "off",
       // 图片仅在有内容时上送，线上键名为 snake_case 的 images
       ...(images?.length ? { images: images.map(i => ({ media_type: i.mediaType, data: i.data })) } : {}),
     }),

@@ -87,8 +87,9 @@ final class RedisSessionStore implements SessionStore
             (int) ($old['meta']['createdAt'] ?? time()),
             time(),
             count($messages),
-            $sel['profileId'] ?? ($old['meta']['profileId'] ?? null),
-            $sel['model'] ?? ($old['meta']['model'] ?? null),
+            array_key_exists('profileId', $sel) ? $sel['profileId'] : ($old['meta']['profileId'] ?? null),
+            array_key_exists('model', $sel) ? $sel['model'] : ($old['meta']['model'] ?? null),
+            array_key_exists('effort', $sel) ? $sel['effort'] : ($old['meta']['effort'] ?? null),
         );
         $r->set($this->key($sessionId), json_encode(
             ['schemaVersion' => 1, 'meta' => $meta->toArray(), 'messages' => $messages],

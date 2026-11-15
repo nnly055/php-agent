@@ -208,7 +208,12 @@ final class AgentServer
         // per-turn 模型切换：在进 async 之前同步解析（校验失败立刻 400，SSE 已开流就无法改状态码）
         $profileId = isset($body['profile_id']) ? (string) $body['profile_id'] : null;
         $model = isset($body['model']) ? (string) $body['model'] : null;
-        $explicit = $profileId !== null || $model !== null;
+        $effort = isset($body['effort']) ? (string) $body['effort'] : null;
+        if ($effort !== null && !in_array($effort, ['off', 'low', 'medium', 'high', 'max'], true)) {
+            return $this->json(400, ['error' => 'effort 必须是 off|low|medium|high|max']);
+        }
+        // 仅显式 effort 也算显式选择（effort-only 轮可持久化，不因缺 profile 而丢失）
+        $explicit = $profileId !== null || $model !== null || $effort !== null;
         $sid = (string) ($body['session_id'] ?? 'default');
 
         if (!$explicit) {
@@ -217,6 +222,7 @@ final class AgentServer
                 if ($m->id === $sid) {
                     $profileId = $m->profileId;
                     $model = $m->model;
+                    $effort = $m->effort; // effort 三级回退：请求 → meta → off（null → run 时落 off）
                     break;
                 }
             }
@@ -236,9 +242,9 @@ final class AgentServer
         }
         $this->loop->setClient($client);
         $this->profiles->setActiveClient($client);
-        // 会话选择落盘：显式指定 profile/model 才记录；都没传 → null（保留上次保存的选择，
-        // 也避免回退出的 meta 值被当成新选择写回）
-        $selection = $explicit ? ['profileId' => $profileId, 'model' => $model] : null;
+        // 会话选择落盘：显式指定任一键才记录；都没传 → null（保留上次保存的选择，
+        // 也避免回退出的 meta 值被当成新选择写回）；三键形状与 CLI/桌面一致
+        $selection = $explicit ? ['profileId' => $profileId, 'model' => $model, 'effort' => $effort] : null;
 
         $messages = $this->store->load($sid);
         $stream = new ThroughStream();
@@ -250,7 +256,7 @@ final class AgentServer
             $broker?->discardActive();
         });
 
-        \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker, $selection, $images): void {
+        \React\Async\async(function () use ($stream, $sid, $message, $messages, $broker, $selection, $images, $effort): void {
             try {
                 $onEvent = function (StreamEvent $e) use ($stream): void {
                     $stream->write($this->sseFrame($e));
@@ -259,7 +265,7 @@ final class AgentServer
                 if ($broker !== null) {
                     $broker->setEmitter($onEvent);
                 }
-                $final = $this->loop->run($messages, $message, $onEvent, $images);
+                $final = $this->loop->run($messages, $message, $onEvent, $images, ['effort' => $effort ?? 'off']);
                 $this->store->save($sid, $messages, $selection);
                 HookPipeline::fire($this->hooks, 'session_saved', ['sessionId' => $sid]);
                 $stream->write($this->sseFrame(StreamEvent::finalAnswer($final)));

@@ -173,6 +173,40 @@ final class SessionStoreTest extends TestCase
         self::assertSame('p-1', $meta->profileId, 'null selection 保留旧值');
     }
 
+    public function testEffortPersistence(): void
+    {
+        foreach ($this->stores() as $kind => $store) {
+            $this->assertEffortPersistence($store);
+            $store->delete('eff-1');
+        }
+    }
+
+    /** effort 持久化：三键 selection 落盘；显式 null 是权威覆盖（不是缺失）——array_key_exists 语义 */
+    private function assertEffortPersistence(SessionStore $store): void
+    {
+        $msg = [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'hi']]]];
+        $store->save('eff-1', $msg, ['profileId' => 'p', 'model' => 'm', 'effort' => 'high']);
+        $meta = array_values(array_filter($store->list(50), static fn ($m) => $m->id === 'eff-1'))[0];
+        self::assertSame('high', $meta->effort);
+        self::assertSame('p', $meta->profileId);
+
+        $store->save('eff-1', $msg); // null selection = 保留旧值
+        $meta = array_values(array_filter($store->list(50), static fn ($m) => $m->id === 'eff-1'))[0];
+        self::assertSame('high', $meta->effort, 'null selection 保留 effort');
+
+        $store->save('eff-1', $msg, ['profileId' => null, 'model' => 'm', 'effort' => null]); // 显式 null = 权威覆盖
+        $meta = array_values(array_filter($store->list(50), static fn ($m) => $m->id === 'eff-1'))[0];
+        self::assertNull($meta->effort, '显式 null 覆盖旧 effort（?? 会误判缺失）');
+        self::assertNull($meta->profileId, '显式 null 覆盖旧 profileId');
+    }
+
+    public function testMetaFromArrayLegacyWithoutEffort(): void
+    {
+        // 旧数据（本功能上线前写入）缺 effort 键 → null，不报错
+        $m = SessionMeta::fromArray(['id' => 'x', 'title' => 't', 'createdAt' => 1, 'updatedAt' => 2, 'messageCount' => 0]);
+        self::assertNull($m->effort);
+    }
+
     public function testRedisStoreIfAvailable(): void
     {
         if (!class_exists(\Redis::class)) {

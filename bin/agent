@@ -148,9 +148,10 @@ while (true) {
         if ($sessionId !== $lastSessionId || $name === 'resume') {
             $lastSessionId = $sessionId;
             $selection = SessionModelRebinder::rebind($registry, $loop, $sessionId, $store);
-            $modelDesc = $selection !== null
-                ? "{$selection['profileId']} / {$selection['model']}"
-                : '默认档';
+            $effortDesc = ($selection['effort'] ?? null) !== null ? " · 强度 {$selection['effort']}" : '';
+            $modelDesc = ($selection['profileId'] ?? null) !== null
+                ? "{$selection['profileId']} / {$selection['model']}{$effortDesc}"
+                : '默认档' . ($selection !== null ? $effortDesc : '');
             $ui->info("当前模型: {$modelDesc}");
         }
         continue;
@@ -159,7 +160,7 @@ while (true) {
     // 正常任务：跑 agent 循环，成功后整段保存会话（含模型选择；null = 保留既有 meta）
     $snapshot = $messages;
     try {
-        $loop->run($messages, $line, $ui->handleEvent(...));
+        $loop->run($messages, $line, $ui->handleEvent(...), [], ['effort' => $selection['effort'] ?? 'off']);
         $store->save($sessionId, $messages, $selection);
         HookPipeline::fire($kernel->hooks(), 'session_saved', ['sessionId' => $sessionId]);
     } catch (\Throwable $e) {

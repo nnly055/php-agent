@@ -51,20 +51,20 @@ describe("SessionItem", () => {
   });
 
   it("open restores persisted selection carried by the session meta", async () => {
-    // meta 来自 /sessions 列表项（props），携带落库时的平台/模型选择
-    render(<SessionItem meta={{ ...meta, profileId: "p-7", model: "m-7" }} />);
+    // meta 来自 /sessions 列表项（props），携带落库时的平台/模型/强度选择
+    render(<SessionItem meta={{ ...meta, profileId: "p-7", model: "m-7", effort: "high" }} />);
     fireEvent.click(screen.getByRole("button", { name: /测试会话/ }));
     await waitFor(() => expect(useAppStore.getState().activeSession).toBe("s1"));
-    expect(useAppStore.getState().selection).toEqual({ profileId: "p-7", model: "m-7" });
+    expect(useAppStore.getState().selection).toEqual({ profileId: "p-7", model: "m-7", effort: "high" });
   });
 
   it("open without meta selection leaves selection reset (no stale carry-over)", async () => {
-    useAppStore.getState().setSelection({ profileId: "p-old", model: "m-old" });
+    useAppStore.getState().setSelection({ profileId: "p-old", model: "m-old", effort: "max" });
     render(<SessionItem meta={meta} />);
     fireEvent.click(screen.getByRole("button", { name: /测试会话/ }));
     await waitFor(() => expect(useAppStore.getState().activeSession).toBe("s1"));
     // setActiveSession 重置选择，meta 未携带时不得回填旧值
-    expect(useAppStore.getState().selection).toEqual({ profileId: null, model: null });
+    expect(useAppStore.getState().selection).toEqual({ profileId: null, model: null, effort: "off" });
   });
 
   it("open tolerates malformed history without empty bubbles", async () => {

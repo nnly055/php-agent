@@ -39,8 +39,10 @@ final class InMemorySessionStore implements SessionStore
                 $old?->createdAt ?? time(),
                 time(),
                 count($messages),
-                $sel['profileId'] ?? $old?->profileId ?? null,
-                $sel['model'] ?? $old?->model ?? null,
+                // selection 键存在即权威（含显式 null）：?? 会把 /effort-only 轮的显式 null 当缺失，抹掉已存选择
+                array_key_exists('profileId', $sel) ? $sel['profileId'] : ($old?->profileId ?? null),
+                array_key_exists('model', $sel) ? $sel['model'] : ($old?->model ?? null),
+                array_key_exists('effort', $sel) ? $sel['effort'] : ($old?->effort ?? null),
             ),
         ];
     }

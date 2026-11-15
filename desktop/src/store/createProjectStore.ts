@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AgentEvent } from "../lib/sse";
-import type { ImageAttachment, SessionMeta, Status } from "../lib/api";
+import type { Effort, ImageAttachment, SessionMeta, Status } from "../lib/api";
 
 export type ToolCard = {
   id: string; name: string; input: any; result?: string;
@@ -29,8 +29,8 @@ type State = {
   streamAbort: AbortController | null;
   pendingConfirm: PendingConfirm | null;
   error: string | null;
-  // 本轮对话的平台/模型选择；null 表示沿用全局默认档
-  selection: { profileId: string | null; model: string | null };
+  // 本轮对话的平台/模型/强度选择；profileId/model null 表示沿用全局默认档，effort 默认 off
+  selection: { profileId: string | null; model: string | null; effort: Effort };
 
   setSessionId: (id: string) => void;
   setBackend: (url: string) => void;
@@ -38,7 +38,7 @@ type State = {
   setConnected: (c: boolean) => void;
   setSessions: (s: SessionMeta[]) => void;
   setActiveSession: (id: string, messages?: ChatMessage[]) => void;
-  setSelection: (s: { profileId: string | null; model: string | null }) => void;
+  setSelection: (s: { profileId: string | null; model: string | null; effort: Effort }) => void;
   setStreamAbort: (c: AbortController | null) => void;
   setError: (e: string | null) => void;
   beginTurn: (text: string, images?: ImageAttachment[]) => void;
@@ -69,7 +69,7 @@ export function createProjectStore() {
     streamAbort: null,
     pendingConfirm: null,
     error: null,
-    selection: { profileId: null, model: null },
+    selection: { profileId: null, model: null, effort: "off" },
 
     setSessionId: (id) => set({ sessionId: id }),
     setBackend: (url) => set({ backendUrl: url }),
@@ -80,7 +80,7 @@ export function createProjectStore() {
       // 切会话先中止在途流，防止旧会话的流继续 applyEvent 串进新会话的 transcript。
       get().streamAbort?.abort();
       // 切会话同时重置选择为 null：新会话继承全局默认档；持久选择由会话 meta 恢复。
-      set({ activeSession: id, messages, streaming: false, streamAbort: null, pendingConfirm: null, error: null, selection: { profileId: null, model: null } });
+      set({ activeSession: id, messages, streaming: false, streamAbort: null, pendingConfirm: null, error: null, selection: { profileId: null, model: null, effort: "off" } });
     },
     setSelection: (s) => set({ selection: s }),
     setStreamAbort: (c) => set({ streamAbort: c }),
@@ -175,7 +175,7 @@ export function createProjectStore() {
       set({
         sessionId: "", backendUrl: "", status: null, connected: false, sessions: [], activeSession: "",
         messages: [], streaming: false, streamAbort: null, pendingConfirm: null, error: null,
-        selection: { profileId: null, model: null },
+        selection: { profileId: null, model: null, effort: "off" },
       });
     },
   }));

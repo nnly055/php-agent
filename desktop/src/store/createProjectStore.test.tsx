@@ -40,19 +40,19 @@ describe("selection（对话内平台/模型选择）", () => {
   it("selection 默认 null，setSelection 生效，setActiveSession 重置", () => {
     // 沿用本文件的工厂风格：每个用例独立 store 实例，不依赖全局单例
     const s = createProjectStore();
-    expect(s.getState().selection).toEqual({ profileId: null, model: null });
-    s.getState().setSelection({ profileId: "p-1", model: "m" });
-    expect(s.getState().selection).toEqual({ profileId: "p-1", model: "m" });
+    expect(s.getState().selection).toEqual({ profileId: null, model: null, effort: "off" });
+    s.getState().setSelection({ profileId: "p-1", model: "m", effort: "high" });
+    expect(s.getState().selection).toEqual({ profileId: "p-1", model: "m", effort: "high" });
     // 切会话重置为 null：新会话继承全局默认档，持久选择靠 meta 恢复
     s.getState().setActiveSession("web-x", []);
-    expect(s.getState().selection).toEqual({ profileId: null, model: null });
+    expect(s.getState().selection).toEqual({ profileId: null, model: null, effort: "off" });
   });
 
   it("reset 回到初值，selection 一并清空", () => {
     const s = createProjectStore();
-    s.getState().setSelection({ profileId: "p-1", model: "m" });
+    s.getState().setSelection({ profileId: "p-1", model: "m", effort: "high" });
     s.getState().reset();
-    expect(s.getState().selection).toEqual({ profileId: null, model: null });
+    expect(s.getState().selection).toEqual({ profileId: null, model: null, effort: "off" });
   });
 });
 

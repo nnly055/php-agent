@@ -58,6 +58,7 @@ final class Sqlite3SessionStore implements SessionStore
                 (int) $row['message_count'],
                 isset($m['profileId']) ? (string) $m['profileId'] : null,
                 isset($m['model']) ? (string) $m['model'] : null,
+                isset($m['effort']) ? (string) $m['effort'] : null,
             );
         }
         return $metas;
@@ -111,8 +112,10 @@ final class Sqlite3SessionStore implements SessionStore
             [
                 'schemaVersion' => 1,
                 'meta' => [
-                    'profileId' => $sel['profileId'] ?? ($oldPayload['meta']['profileId'] ?? null),
-                    'model' => $sel['model'] ?? ($oldPayload['meta']['model'] ?? null),
+                    // selection 键存在即权威（含显式 null），与其余三 store 同语义
+                    'profileId' => array_key_exists('profileId', $sel) ? $sel['profileId'] : ($oldPayload['meta']['profileId'] ?? null),
+                    'model' => array_key_exists('model', $sel) ? $sel['model'] : ($oldPayload['meta']['model'] ?? null),
+                    'effort' => array_key_exists('effort', $sel) ? $sel['effort'] : ($oldPayload['meta']['effort'] ?? null),
                 ],
                 'messages' => $messages,
             ],

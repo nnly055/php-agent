@@ -35,10 +35,10 @@ final class CliResumeRebindTest extends TestCase
 
     public function testResumeSameIdSessionRebindsSavedModel(): void
     {
-        // 预置会话：历史 + 模型选择 b/m2（档 b）
+        // 预置会话：历史 + 模型选择 b/m2（档 b）+ 强度 max
         $store = new JsonFileSessionStore($this->dir . '/sessions');
         $store->save('default', [['role' => 'user', 'content' => [['type' => 'text', 'text' => '早前任务']]]],
-            ['profileId' => 'b', 'model' => 'm2']);
+            ['profileId' => 'b', 'model' => 'm2', 'effort' => 'max']);
 
         $env = array_merge(getenv() ?: [], [
             'AGENT_SESSION_DIR' => $this->dir . '/sessions',
@@ -66,7 +66,8 @@ final class CliResumeRebindTest extends TestCase
         fclose($pipes[2]);
         proc_close($proc);
 
-        // /resume 后必须恢复 meta 记录的档（而非默认档 a/m1）
+        // /resume 后必须恢复 meta 记录的档与强度（而非默认档 a/m1/off）
         self::assertStringContainsString('b / m2', $out);
+        self::assertStringContainsString('max', $out);
     }
 }

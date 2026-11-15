@@ -89,7 +89,7 @@ final class CompactPluginTest extends TestCase
     public function testFailureLatchSkipsUntilNextTaskStart(): void
     {
         $broken = new class implements \PhpAgent\LLM\LLMClient {
-            public function stream(array $messages, array $tools, string $system): \Generator
+            public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
             {
                 throw new \RuntimeException('无 key');
                 yield;
@@ -285,7 +285,7 @@ final class CompactPluginTest extends TestCase
                 ) {
                 }
 
-                public function stream(array $messages, array $tools, string $system): \Generator
+                public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
                 {
                     ($this->onStream)();
                     yield from $this->inner->stream($messages, $tools, $system);

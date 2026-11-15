@@ -12,7 +12,7 @@ use PhpAgent\Config;
  */
 final class OpenAICompatClient extends BaseSseClient
 {
-    public function stream(array $messages, array $tools, string $system): \Generator
+    public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
     {
         $body = [
             'model' => $this->config->model(),
@@ -34,6 +34,14 @@ final class OpenAICompatClient extends BaseSseClient
         // per-model maxTokens：显式设置才发送（未设置的端点保持原有行为，避免服务端拒绝或改变语义）
         if ($this->config->maxTokensExplicit()) {
             $body['max_tokens'] = $this->config->maxTokens();
+        }
+
+        // 推理强度：显式选择才发送（off = 不发，现行为不变）；max 收敛到 high（OpenAI 词表无 max）。
+        // 历史中的 thinking/redacted 块由 mapMessages 天然剥离（未知块类型被忽略）
+        $effort = (string) ($options['effort'] ?? 'off');
+        $mapped = ['low' => 'low', 'medium' => 'medium', 'high' => 'high', 'max' => 'high'][$effort] ?? null;
+        if ($mapped !== null) {
+            $body['reasoning_effort'] = $mapped;
         }
 
         $url = $this->config->baseUrl() . '/chat/completions';

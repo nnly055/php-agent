@@ -178,6 +178,7 @@ final class CommandsPlugin implements Plugin
                 $model = isset($args[1]) && trim((string) $args[1]) !== '' ? trim((string) $args[1]) : null;
 
                 $prevProvider = $this->providerOf($registry, $ctx->selection);
+                $prevEffort = $ctx->selection['effort'] ?? null; // /model 换档不换强度：保留当前会话选择
                 try {
                     $registry->bind($ctx->kernel()->loop(), $profileId, $model);
                     $sel = $registry->resolvedSelection()
@@ -185,7 +186,8 @@ final class CommandsPlugin implements Plugin
                 } catch (\InvalidArgumentException $e) {
                     return '✗ ' . $e->getMessage();
                 }
-                $ctx->selection = $sel;
+                // 切换写穿三键（形状与 server/desktop 一致）
+                $ctx->selection = ['profileId' => $sel['profileId'], 'model' => $sel['model'], 'effort' => $prevEffort];
 
                 $newProvider = $this->providerOf($registry, $sel);
                 $protocol = $newProvider === 'anthropic' ? 'anthropic 原生' : ($newProvider === 'fake' ? 'fake（离线）' : 'openai 兼容');
@@ -222,6 +224,7 @@ final class CommandsPlugin implements Plugin
                     $lines[] = sprintf('  %s %-12s %-14s (%s)  %s', $mark, $pid, (string) ($p['name'] ?? ''), $protocol, implode(', ', $models));
                 }
                 $lines[] = '切换: /model <profile> [model]（下一条消息生效）';
+                $lines[] = '思考强度: ' . ($ctx->selection['effort'] ?? 'off') . '（/effort off|low|medium|high|max）';
                 return implode("\n", $lines);
             }
 
@@ -237,6 +240,33 @@ final class CommandsPlugin implements Plugin
                     }
                 }
                 return null;
+            }
+        });
+
+        // 推理强度：per-request 参数（不换 client），随会话 save 持久化。CLI 专属（与 /compact 同理）
+        $kernel->registerCommand('effort', new class implements Command {
+            public function description(): string
+            {
+                return '查看/设置思考强度（/effort [off|low|medium|high|max]）';
+            }
+
+            public function execute(array $args, CommandContext $ctx): string
+            {
+                $current = $ctx->selection['effort'] ?? 'off';
+                if ($args === [] || trim((string) $args[0]) === '') {
+                    return "当前思考强度: {$current}（可选 off|low|medium|high|max，下一条消息生效）";
+                }
+                $value = strtolower(trim((string) $args[0]));
+                if (!in_array($value, ['off', 'low', 'medium', 'high', 'max'], true)) {
+                    return "✗ effort 必须是 off|low|medium|high|max，收到 {$value}";
+                }
+                // 三键写穿：profile/model 保留当前会话选择（可能为 null = 未选过档）
+                $ctx->selection = [
+                    'profileId' => $ctx->selection['profileId'] ?? null,
+                    'model' => $ctx->selection['model'] ?? null,
+                    'effort' => $value,
+                ];
+                return "✓ 思考强度已设为 {$value}（下一条消息生效）";
             }
         });
     }

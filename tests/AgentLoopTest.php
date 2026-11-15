@@ -235,4 +235,74 @@ final class AgentLoopTest extends TestCase
         self::assertCount(1, $out);
         self::assertSame('image/webp', $out[0]['media_type']);
     }
+
+    // ── 推理强度：thinking/redacted 块入史 + options 透传 ──────────────────
+
+    private function historyAssistantBlocks(array $script): array
+    {
+        $registry = new ToolRegistry();
+        $loop = new AgentLoop(new FakeLLMClient([$script]), $registry, 'sys', 5);
+        $messages = [];
+        $loop->run($messages, '任务');
+        return $messages[count($messages) - 1]['content'];
+    }
+
+    public function testThinkingEndRequiresSignatureForHistory(): void
+    {
+        // 无签名的纯思考流（如 openai reasoning_content）不入历史：回放无签名块必 400
+        $blocks = $this->historyAssistantBlocks([
+            StreamEvent::thinking('a'),
+            StreamEvent::thinking('b'),
+            StreamEvent::text('答'),
+            StreamEvent::end('end_turn'),
+        ]);
+        foreach ($blocks as $b) {
+            self::assertNotSame('thinking', $b['type']);
+            self::assertNotSame('redacted_thinking', $b['type']);
+        }
+        self::assertSame('text', $blocks[0]['type']);
+    }
+
+    public function testThinkingEndWithSignaturePrependsBlock(): void
+    {
+        $blocks = $this->historyAssistantBlocks([
+            StreamEvent::thinkingEnd('思考', 'sig1'),
+            StreamEvent::text('答'),
+            StreamEvent::end('end_turn'),
+        ]);
+        self::assertSame(['type' => 'thinking', 'thinking' => '思考', 'signature' => 'sig1'], $blocks[0], 'thinking 块前置');
+        self::assertSame(['type' => 'text', 'text' => '答'], $blocks[1]);
+    }
+
+    public function testThinkingRedactedPrependsBlock(): void
+    {
+        $blocks = $this->historyAssistantBlocks([
+            StreamEvent::thinkingRedacted('enc'),
+            StreamEvent::text('答'),
+            StreamEvent::end('end_turn'),
+        ]);
+        self::assertSame(['type' => 'redacted_thinking', 'data' => 'enc'], $blocks[0]);
+        self::assertSame(['type' => 'text', 'text' => '答'], $blocks[1]);
+    }
+
+    public function testRunPassesEffortOptionToClient(): void
+    {
+        $captured = null;
+        $stub = new class ($captured) implements \PhpAgent\LLM\LLMClient {
+            public function __construct(private ?array &$captured)
+            {
+            }
+
+            public function stream(array $messages, array $tools, string $system, array $options = []): \Generator
+            {
+                $this->captured = $options;
+                yield StreamEvent::text('ok');
+                yield StreamEvent::end('end_turn');
+            }
+        };
+        $loop = new AgentLoop($stub, new ToolRegistry(), 'sys', 5);
+        $messages = [];
+        $loop->run($messages, '任务', null, [], ['effort' => 'high']);
+        self::assertSame(['effort' => 'high'], $captured);
+    }
 }
