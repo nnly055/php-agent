@@ -18,15 +18,17 @@ permissions:
 
 jobs:
   bundle:
-    # macOS-ARM job 在本账号 CI 上被系统性取消（零步骤即 cancel，疑为账号级 macOS
-    # runner 限制；macOS 本机构建已验证可用——v0.4.0 dmg 为本机产物）。
-    # continue-on-error 使其不阻塞 Linux/Windows 发版。
+    # macOS（macos-14/13）不在 CI 矩阵：本账号 macOS runner 被系统性拒绝
+    # （v0.5.0 实测 0s provisioning 失败「configuration not supported」，continue-on-error
+    # 也救不了 run 结论，每次发版都触发失败通知）。macOS dmg 改本机构建后
+    # gh release upload 补挂（v0.4.0/v0.5.0 dmg 均为本机产物）。
+    # 账号限制解除后恢复此行即可回到全 CI 发版：
+    # - { os: macos-14, name: macOS-AppleSilicon }
     continue-on-error: ${{ matrix.os == 'macos-14' }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14, name: macOS-AppleSilicon }
           # Intel Mac（macos-13）：免费 runner 池已被 GitHub 基本下线（排队 20min+ 不分配）。
           # 需要 Intel dmg 时恢复此行，并考虑自托管 runner：
           # - { os: macos-13, name: macOS-Intel }

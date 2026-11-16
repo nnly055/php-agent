@@ -1,6 +1,6 @@
 [package]
 name = "php-agent-desktop"
-version = "0.2.0"
+version = "0.5.0"
 description = "PHP Agent Desktop"
 edition = "2021"
 
