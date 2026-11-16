@@ -8,3 +8,6 @@ composer.lock.bak
 
 # 开发流程内部工作稿（任务规划/设计 spec），只在本地留存，不入版本库
 /docs/superpowers/
+
+# SDD 执行工作区（ledger/briefs/review 包），git-ignored scratch
+/.superpowers/
