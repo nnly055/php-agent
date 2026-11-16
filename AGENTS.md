@@ -9,8 +9,8 @@
 
 - `src/` — PHP 内核：Agent（循环）/ Kernel（装配、ProfileRegistry）/ LLM（双协议客户端）/
   Session（存储）/ Server（HTTP+SSE）/ Mcp / Tools / Hook / Command / Ui
-- `plugins/` — 内置插件（compact / diff / example / mysql-store），各自 src/，独立 autoload
-  （如 Compactor 在 `plugins/compact/src/`，不在 src/）
+- `plugins/` — 内置插件（compact / diff / example / mysql-store），各自 src/，由 plugin.php
+  require_once 自加载（不在根 composer autoload；如 Compactor 在 `plugins/compact/src/`）
 - `desktop/src/` — React 18 + zustand + Tailwind + Radix 原语；`desktop/src-tauri/` — Rust 壳（Tauri 2）
 - `desktop/src-tauri/resources/php-agent/` — PHP 后端 bundle 副本，由 `desktop/scripts/bundle-backend.sh`
   组装；**改了 PHP 后端，桌面发布前须重新 bundle**
@@ -31,19 +31,21 @@ php bin/agent --fake             # 离线演示（无需 API key）
 1. 归一化历史块对齐 Anthropic 块结构，snake_case 键：text / tool_use / tool_result / image /
    thinking / redacted_thinking（src/Agent/AgentLoop.php）
 2. 同一校验规则在其存在的每个入口同下限：maxTokens≥1024 → FE SettingsDialog.tsx + Config.php +
-   ProfileRegistry.php；models 非空 / baseUrl http(s) → FE + PHP + Rust lib.rs
+   ProfileRegistry.php；models 非空 / baseUrl http(s) → PHP（Config.php / AgentServer.php）+ Rust
+   lib.rs（这两项无 FE 前置，桌面入口由 Rust 挡）
 3. 请求回退三级同构：请求携带 → 会话 meta → 默认值（profileId / model / effort 同形状，AgentServer.php）
 4. selection 三键 {profileId, model, effort} 均可 null，CLI / 桌面 / Rebinder 同形状
    （SessionModelRebinder.php）
 5. store save 用 array_key_exists 判定覆盖（显式 null 是权威），禁用 ??（Session/Store 四实现一致）
 6. 新能力默认 off：off / 缺省 = 不发字段 = 现行为零变化（OpenAICompatClient reasoning_effort 映射）
 7. 签名扩展加可选参数带默认值，既有调用点零变化（LLMClient::stream 第 4 参 $options = []）
-8. 安全基线：配置文件原子写 + 0600（Rust lib.rs mcp.json；PHP JsonFileSessionStore 同目录 rename）；
-   凭据端点 Origin 白名单（非法 403）；workspace 路径校验；服务仅绑 127.0.0.1
+8. 安全基线：配置文件原子写 + 0600（Rust lib.rs mcp.json 原子+0600；PHP JsonFileSessionStore
+   仅原子 rename，无 0600）；凭据端点 Origin 白名单（非法 403）；workspace 路径校验；仅绑 127.0.0.1
 9. PHP 8.1 兼容：高版本常量/函数用 defined() / function_exists 防护
    （BaseSseClient.php CURLOPT_XFERINFOFUNCTION，CI 8.1 缺此常量）
 10. 版本三处同步：Config::VERSION / desktop/package.json / src-tauri/tauri.conf.json
-11. 测试 tearDown 清理 AGENT_WORKSPACE 等环境变量，防用例间污染（McpConfigTest.php）
+11. 测试 tearDown 清理 AGENT_WORKSPACE 等环境变量，防用例间污染
+    （DiffPluginTest.php / CompactPluginTest.php）
 12. 跨协议改动补 wire 矩阵回放测试：openai / anthropic 产历史互回放线上格式断言
     （tests/HttpTransportTest.php）
 13. 零新依赖优先：复用仓库已有原语（Radix 组件、zustand store 模式）
