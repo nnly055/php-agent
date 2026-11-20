@@ -52,3 +52,22 @@
 决策：signature 非空才入历史，无签名块仅 UI 透传。
 理由：Anthropic 回放无签名块必 400；openai 端 reasoning_content 本就无签名，入了也是脏数据。
 出处：spec 2026-11-15-model-picker-and-effort 决策表
+## 2026-11-20 | 技能清单走工具 description，不走 system prompt
+决策：skill 可用清单进工具 description（每请求重建 specs），system 保持构造期固定。
+理由：system 注入要动 AgentLoop/LLMClient 签名（契约 7 加重）；工具 description 天然动态、核心零改动。
+出处：spec 2026-11-20-skills §4、commit 6413980
+
+## 2026-11-20 | 路径型配置相对 workspace 解析，不按 cwd
+决策：AGENT_SKILLS_DIR 相对条目按 workspace() 拼绝对路径。
+理由：CLI（cwd=仓库根）与 server sidecar（cwd=bundle 目录）cwd 不同，按 getcwd 会同一配置两端扫到不同目录且静默跳过（显示≠实际）。
+出处：spec 2026-11-20-skills §5.1、commit 23c6acd
+
+## 2026-11-20 | 内容类扩展不扩沙箱
+决策：skill（markdown）正文经工具原文返回；workspace 外技能目录的附件不为此扩 read_file 沙箱，声明不可读并告警。
+理由：安全基线（workspace 路径校验）不让步；正文本就完整可用，附件损失可接受且可诊断。
+出处：spec 2026-11-20-skills §5.1、commit d6111c3
+
+## 2026-11-20 | 零注册边界不吞诊断
+决策：功能的 no-op 边界只约束注册面（工具/命令/存取器）；诊断告警先于边界打印。
+理由：告警在 isEmpty() 之后会被整体吞掉，唯一技能被跳过时作者零诊断（静默丢失 bug 类）。
+出处：终审 Important#1、commit 6354fc7
