@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **技能（skill）支持：markdown 工作流指引 × 模型自主取用 × 命令手动注入**
+  - 技能 = `<name>/SKILL.md`（YAML frontmatter name/description + 正文，与 Claude Code 兼容）；
+    扫描 `<workspace>/.agent/skills/` 与 `AGENT_SKILLS_DIR`（相对路径按 workspace 解析），同名后者覆盖
+  - `skill` 工具（ReadOnly）：description 动态携带技能清单，任务匹配时模型自主加载正文；
+    ask 权限模式不打断确认
+  - CLI `/skills` 列表、`/skill <name>` 注入正文进会话历史（server 无命令分发，桌面走模型自主触发）
+  - 已知边界：workspace 外技能目录的附件模型不可读（沙箱不让步，扫描时 warning）；
+    连续 user 消息在老式 Anthropic 协议网关（Bedrock/Vertex 类）可能 400（官方 API/openai 端不受影响）
+  - 无技能 / `AGENT_SKILLS=off` → 不注册任何东西，现行为零变化
+
 ## [0.5.0] - 2026-11-15
 
 ### 新增
