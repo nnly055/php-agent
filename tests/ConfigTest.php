@@ -179,4 +179,32 @@ final class ConfigTest extends TestCase
         self::assertSame('', Config::fromArray([])->defaultProfileId());
         self::assertSame('glm', Config::fromArray(['AGENT_DEFAULT_PROFILE' => ' glm '])->defaultProfileId());
     }
+
+    public function testSkillsEnabledDefaultOnAndOff(): void
+    {
+        self::assertTrue(Config::fromArray([])->skillsEnabled());
+        self::assertFalse(Config::fromArray(['AGENT_SKILLS' => 'off'])->skillsEnabled());
+        self::assertTrue(Config::fromArray(['AGENT_SKILLS' => 'ON'])->skillsEnabled());
+    }
+
+    public function testSkillDirsSplitsCommasTrimsDropsEmpty(): void
+    {
+        $dirs = Config::fromArray(['AGENT_SKILLS_DIR' => ' /a , /b ,, '])->skillDirs();
+        self::assertSame(['/a', '/b'], $dirs);
+        self::assertSame([], Config::fromArray([])->skillDirs());
+    }
+
+    public function testSkillDirsResolvesRelativeAgainstWorkspace(): void
+    {
+        // workspace() 走 realpath 校验存在性（不存在即 throw），目录必须真建；
+        // 期望值用 $c->workspace() 自身拼接，规避 macOS /var → /private/var 的 realpath 漂移
+        $ws = sys_get_temp_dir() . '/php-agent-ws-' . uniqid();
+        mkdir($ws, 0777, true);
+        try {
+            $c = Config::fromArray(['AGENT_WORKSPACE' => $ws, 'AGENT_SKILLS_DIR' => 'my-skills']);
+            self::assertSame([$c->workspace() . '/my-skills'], $c->skillDirs());
+        } finally {
+            @rmdir($ws);
+        }
+    }
 }

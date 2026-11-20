@@ -180,6 +180,30 @@ final class Config
         return strtolower(trim($this->env['AGENT_MCP'] ?? 'on')) !== 'off';
     }
 
+    /** 技能开关（AGENT_SKILLS）：off 关闭；默认 on（镜像 AGENT_MCP） */
+    public function skillsEnabled(): bool
+    {
+        return strtolower(trim($this->env['AGENT_SKILLS'] ?? 'on')) !== 'off';
+    }
+
+    /** 技能目录（AGENT_SKILLS_DIR）：逗号分隔追加目录；相对路径按 workspace 解析；默认 [] */
+    public function skillDirs(): array
+    {
+        $raw = trim($this->env['AGENT_SKILLS_DIR'] ?? '');
+        if ($raw === '') {
+            return [];
+        }
+        $dirs = [];
+        foreach (explode(',', $raw) as $d) {
+            $d = trim($d);
+            if ($d === '') {
+                continue;
+            }
+            $dirs[] = str_starts_with($d, '/') ? $d : rtrim($this->workspace(), '/') . '/' . $d;
+        }
+        return $dirs;
+    }
+
     // ── 权限与审计 ──────────────────────────────────────────
 
     /**
