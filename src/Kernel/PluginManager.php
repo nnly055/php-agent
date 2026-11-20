@@ -12,6 +12,7 @@ use PhpAgent\Plugins\FakePlugin;
 use PhpAgent\Plugins\McpPlugin;
 use PhpAgent\Plugins\OpenAICompatPlugin;
 use PhpAgent\Plugins\SessionPlugin;
+use PhpAgent\Plugins\SkillsPlugin;
 
 /**
  * 插件发现与加载（三层，后注册者覆盖同 id）：
@@ -68,6 +69,7 @@ final class PluginManager
             AuditPlugin::class,
             CommandsPlugin::class,
             McpPlugin::class,
+            SkillsPlugin::class,
         ];
     }
 

@@ -115,6 +115,19 @@ final class AgentKernel
         return $this->profileRegistry;
     }
 
+    private ?\PhpAgent\Skills\SkillRegistry $skillRegistry = null;
+
+    /** SkillsPlugin 扫描成功后注册（命令侧经此取用；工具侧构造时直接持有） */
+    public function setSkillRegistry(\PhpAgent\Skills\SkillRegistry $r): void
+    {
+        $this->skillRegistry = $r;
+    }
+
+    public function skillRegistry(): ?\PhpAgent\Skills\SkillRegistry
+    {
+        return $this->skillRegistry;
+    }
+
     private ?\PhpAgent\Agent\AgentLoop $loop = null;
 
     /** 装配后注册运行中的 agent 循环（/model 等切换类命令经此触达 setClient） */
