@@ -33,9 +33,10 @@ final class SkillsPluginTest extends TestCase
 
     private function boot(string $envExtra = ''): AgentKernel
     {
+        // AGENT_SKILLS_DIR= 显式中和 shell 里可能 export 的同名变量（镜像 McpPluginTest 的 AGENT_MCP 惯例）
         file_put_contents(
             $this->root . '/.env',
-            "AGENT_WORKSPACE={$this->workspace}\nAGENT_SKILLS=on\n" . $envExtra
+            "AGENT_WORKSPACE={$this->workspace}\nAGENT_SKILLS=on\nAGENT_SKILLS_DIR=\n" . $envExtra
         );
         $kernel = new AgentKernel(Config::load($this->root));
         PluginManager::load($kernel, $this->root);
@@ -130,5 +131,50 @@ final class SkillsPluginTest extends TestCase
         self::assertStringStartsWith("✗ 未知技能 'nope'", $out);
         self::assertStringContainsString('php-ext', $out);
         self::assertSame([], $messages, '失败路径不得污染历史');
+    }
+
+    public function testShellExportedSkillsDirNeutralizedByEnvFile(): void
+    {
+        // 契约 11 精神：目标用户（shell 里 export 过 AGENT_SKILLS_DIR 的人）跑本文件
+        // 不得让 shell 目录泄漏进装配——boot 的 .env 必须显式写 AGENT_SKILLS_DIR=（空值）中和
+        putenv('AGENT_SKILLS_DIR=' . $this->workspace . '/team-skills');
+        mkdir($this->workspace . '/team-skills/shell-skill', 0777, true);
+        file_put_contents($this->workspace . '/team-skills/shell-skill/SKILL.md', "---\nname: shell-skill\ndescription: d\n---\nb");
+        try {
+            exec('rm -rf ' . escapeshellarg($this->workspace . '/.agent'));
+            $kernel = $this->boot();
+            self::assertNull($kernel->skillRegistry(), 'shell 导出的 AGENT_SKILLS_DIR 不应泄漏进测试装配');
+        } finally {
+            putenv('AGENT_SKILLS_DIR');
+            exec('rm -rf ' . escapeshellarg($this->workspace . '/team-skills'));
+        }
+    }
+
+    public function testSkippedSkillStillEmitsWarningToStderr(): void
+    {
+        // 静默丢失 bug 类：唯一技能因 name 为空被跳过时，诊断告警不得被 isEmpty() 提前返回吞掉。
+        // STDERR 经子进程 runner 捕获（STDERR 常量进程内不可重定向）
+        $workspace2 = sys_get_temp_dir() . '/php-agent-skills-warn-' . uniqid();
+        $root2 = sys_get_temp_dir() . '/php-agent-skills-warn-root-' . uniqid();
+        mkdir("{$workspace2}/.agent/skills/bad", 0777, true);
+        file_put_contents("{$workspace2}/.agent/skills/bad/SKILL.md", "---\nname:   \ndescription: d\n---\nb");
+        mkdir($root2, 0777, true);
+        file_put_contents("{$root2}/.env", "AGENT_WORKSPACE={$workspace2}\nAGENT_SKILLS=on\n");
+        try {
+            $runner = dirname(__DIR__) . '/tests/fixtures/skills/skills-warn-runner.php';
+            $cmd = sprintf(
+                'PHP_AGENT_ROOT=%s PHP_AGENT_TEST_ROOT=%s %s %s 2>&1',
+                escapeshellarg(dirname(__DIR__)),
+                escapeshellarg($root2),
+                escapeshellarg(PHP_BINARY),
+                escapeshellarg($runner)
+            );
+            $out = (string) shell_exec($cmd);
+            self::assertStringContainsString('name 为空', $out, '被跳过的技能必须留下 STDERR 诊断');
+            self::assertStringContainsString('REGISTRY=null', $out, '零注册边界不变');
+        } finally {
+            exec('rm -rf ' . escapeshellarg($root2));
+            exec('rm -rf ' . escapeshellarg($workspace2));
+        }
     }
 }

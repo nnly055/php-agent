@@ -43,12 +43,12 @@ final class SkillsPlugin implements Plugin
             [$workspace . '/.agent/skills', ...$config->skillDirs()],
             $workspace
         );
-        if ($registry->isEmpty()) {
-            return; // 无技能 = 现行为零变化
-        }
-
+        // 告警先于零注册边界打印：唯一技能被跳过时作者也要能看到诊断（静默丢失 bug 类）
         foreach ($loader->warnings() as $warning) {
             fwrite(STDERR, "⚠ {$warning}\n");
+        }
+        if ($registry->isEmpty()) {
+            return; // 无技能 = 现行为零变化（不注册工具/命令/registry；STDERR 诊断不属于该边界）
         }
 
         $kernel->setSkillRegistry($registry);
