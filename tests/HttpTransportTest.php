@@ -324,6 +324,26 @@ final class HttpTransportTest extends TestCase
         self::assertSame('a.txt', $tool['content']);
     }
 
+    public function testConsecutiveUserMessagesReplayToBothProtocols(): void
+    {
+        // /skill 注入场景：技能注入消息 + 真实输入 = 连续两条 user 文本消息。
+        // 契约 12 只测不改：两侧客户端原样透传（Anthropic 官方 API 自动合并，openai 从不要求交替）；
+        // 若未来引入防御性合并，须先修订 spec 并更新本测试（显式决策，不得静默改历史语义）
+        $skillMsg = ['role' => 'user', 'content' => [['type' => 'text', 'text' => '已加载技能 php-ext。请遵循指引。']]];
+        $realMsg = ['role' => 'user', 'content' => [['type' => 'text', 'text' => '继续任务']]];
+
+        $anthropic = $this->captureAnthropic([$skillMsg, $realMsg]);
+        self::assertCount(2, $anthropic['messages']);
+        self::assertSame('user', $anthropic['messages'][0]['role']);
+        self::assertSame('user', $anthropic['messages'][1]['role']);
+        self::assertSame('继续任务', $anthropic['messages'][1]['content'][0]['text']);
+
+        $openai = $this->captureOpenAi([$skillMsg, $realMsg]);
+        self::assertSame('user', $openai['messages'][1]['role']); // [0]=system
+        self::assertSame('user', $openai['messages'][2]['role']);
+        self::assertSame('继续任务', $openai['messages'][2]['content']);
+    }
+
     public function testEmptyAssistantMessageDroppedByBothClients(): void
     {
         // 边界：归一化历史里的 assistant 空 content 数组（流结束但无内容的历史残留）→ 两客户端均整条跳过
