@@ -91,4 +91,44 @@ final class SkillsPluginTest extends TestCase
         $kernel = $this->boot("AGENT_SKILLS_DIR=team-skills\n");
         self::assertNotNull($kernel->skillRegistry()->find('guide'));
     }
+
+    public function testSkillsCommandListsEntries(): void
+    {
+        $kernel = $this->boot();
+        $messages = [];
+        $sessionId = 't';
+        $selection = null;
+        $out = $kernel->command('skills')->execute([], new CommandContext($kernel, $messages, $sessionId, $selection));
+        self::assertStringContainsString('php-ext', $out);
+        self::assertStringContainsString('写 PHP 扩展的步骤', $out);
+        self::assertStringContainsString('/.agent/skills', $out);
+        self::assertStringContainsString('/skill <name>', $out);
+    }
+
+    public function testSkillCommandInjectsUserMessage(): void
+    {
+        $kernel = $this->boot();
+        $messages = [];
+        $sessionId = 't';
+        $selection = null;
+        $out = $kernel->command('skill')->execute(['php-ext'], new CommandContext($kernel, $messages, $sessionId, $selection));
+        self::assertStringStartsWith('✓ 已加载技能 php-ext', $out);
+        self::assertCount(1, $messages);
+        self::assertSame('user', $messages[0]['role']);
+        $text = $messages[0]['content'][0]['text'];
+        self::assertStringContainsString('<skill name="php-ext">', $text);
+        self::assertStringContainsString('先跑 phpize。', $text);
+    }
+
+    public function testSkillCommandUnknownName(): void
+    {
+        $kernel = $this->boot();
+        $messages = [];
+        $sessionId = 't';
+        $selection = null;
+        $out = $kernel->command('skill')->execute(['nope'], new CommandContext($kernel, $messages, $sessionId, $selection));
+        self::assertStringStartsWith("✗ 未知技能 'nope'", $out);
+        self::assertStringContainsString('php-ext', $out);
+        self::assertSame([], $messages, '失败路径不得污染历史');
+    }
 }
