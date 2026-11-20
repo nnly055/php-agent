@@ -66,7 +66,9 @@ final class ConfigTest extends TestCase
 
     public function testVersionConstantExists(): void
     {
-        self::assertSame('0.5.0', Config::VERSION);
+        // 只验存在与 semver 形态，不钉字面量——Config::VERSION 是版本单一来源（契约 10），
+        // 钉字面量会成为第四处副本，每次发版必挂 CI（v0.5.0 / v0.6.0 release 提交两度翻车）
+        self::assertMatchesRegularExpression('/^\d+\.\d+\.\d+$/', Config::VERSION);
     }
 
     public function testDefaultModeEnvFileOverridesShell(): void
